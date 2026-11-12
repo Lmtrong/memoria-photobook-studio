@@ -152,6 +152,7 @@ export interface Album {
   cover: CoverConfig;
   pages: AlbumPage[];
   isSample?: boolean;
+  shareKey?: string;
 }
 
 export interface StoredPhoto {
@@ -167,12 +168,23 @@ export interface StoredPhoto {
   createdAt: string;
 }
 
+export interface AudioSegmentConfig {
+  id: string;
+  sourceName: string;
+  startTime: number; // seconds
+  endTime: number; // seconds
+  fadeIn: number; // seconds
+  fadeOut: number; // seconds
+}
+
 export interface StoredAudio {
   id: string;
   albumId: string;
   name: string;
   mimeType: string;
   blob: Blob;
+  duration?: number;
+  segments?: AudioSegmentConfig[];
   createdAt: string;
 }
 

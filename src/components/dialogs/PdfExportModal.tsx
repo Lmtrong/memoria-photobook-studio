@@ -30,7 +30,7 @@ export const PdfExportModal: React.FC<PdfExportModalProps> = ({
   const [fromPage, setFromPage] = useState(1);
   const [toPage, setToPage] = useState(album.pages.length);
   const [includeCover, setIncludeCover] = useState(true);
-  const [quality, setQuality] = useState<'standard' | 'high' | 'print'>('high');
+  const [quality, setQuality] = useState<'standard' | 'high' | 'print'>('print');
 
   const [isExporting, setIsExporting] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 1 });
@@ -42,19 +42,36 @@ export const PdfExportModal: React.FC<PdfExportModalProps> = ({
   const dims = FORMAT_DIMENSIONS[album.format] || FORMAT_DIMENSIONS.landscape;
   const coverPhotoUrl = album.cover.coverPhotoId ? photoUrls[album.cover.coverPhotoId] : null;
 
+  const waitForStageImages = async (container: HTMLElement) => {
+    const imgs = Array.from(container.querySelectorAll('img'));
+    await Promise.all(
+      imgs.map(async (img) => {
+        if (!img.complete) {
+          await new Promise<void>((resolve) => {
+            img.onload = () => resolve();
+            img.onerror = () => resolve();
+          });
+        }
+        if (typeof img.decode === 'function') {
+          try {
+            await img.decode();
+          } catch {
+            // ignore decode errors on broken/empty urls
+          }
+        }
+      })
+    );
+    // Allow React state updates from CroppedPhotoImage onLoad to flush to DOM
+    await new Promise((r) => setTimeout(r, 80));
+  };
+
   const handleStartExport = async () => {
     if (!renderStageRef.current) return;
     setIsExporting(true);
 
     try {
-      const scaleFactor = quality === 'print' ? 2.2 : quality === 'high' ? 1.6 : 1.1;
-      const startIdx = rangeType === 'all' ? 0 : Math.max(0, fromPage - 1);
-      const endIdx =
-        rangeType === 'all'
-          ? album.pages.length - 1
-          : Math.min(album.pages.length - 1, Math.max(startIdx, toPage - 1));
+      const targetScale = quality === 'print' ? 3.5 : quality === 'high' ? 2.6 : 1.8;
 
-      const selectedPages = album.pages.slice(startIdx, endIdx + 1);
       const stageNodes = Array.from(
         renderStageRef.current.querySelectorAll('[data-pdf-item]')
       ) as HTMLElement[];
@@ -65,14 +82,19 @@ export const PdfExportModal: React.FC<PdfExportModalProps> = ({
 
       setProgress({ current: 0, total: stageNodes.length });
 
+      // Ensure all high-res images in the offscreen stage are 100% decoded & cropped
+      await waitForStageImages(renderStageRef.current);
+
       const pdfPageWidth = exportMode === 'spread' ? dims.width * 2 : dims.width;
       const pdfPageHeight = dims.height;
-      const orientation = pdfPageWidth >= pdfPageHeight ? 'landscape' : 'portrait';
 
       let pdf: jsPDF | null = null;
 
       for (let i = 0; i < stageNodes.length; i++) {
         setProgress({ current: i + 1, total: stageNodes.length });
+        // Yield to keep UI progress bar smooth and prevent browser freeze
+        await new Promise((r) => setTimeout(r, 25));
+
         const node = stageNodes[i];
         const isSingleCoverNode = node.getAttribute('data-pdf-cover') === 'true';
 
@@ -80,17 +102,22 @@ export const PdfExportModal: React.FC<PdfExportModalProps> = ({
         const nodeH = pdfPageHeight;
         const pageOrientation = nodeW >= nodeH ? 'landscape' : 'portrait';
 
+        // Cap canvas dimension safely at 4096px max side so browser canvas never overflows
+        const maxAllowedScale = Math.min(targetScale, 4096 / Math.max(nodeW, nodeH));
+
         const canvas = await html2canvas(node, {
-          scale: scaleFactor,
+          scale: maxAllowedScale,
           width: nodeW,
           height: nodeH,
           useCORS: true,
           allowTaint: true,
+          imageTimeout: 0,
           backgroundColor: '#F8F5F0',
           logging: false,
         });
 
-        const imgData = canvas.toDataURL('image/jpeg', quality === 'standard' ? 0.85 : 0.95);
+        const jpegQuality = quality === 'standard' ? 0.92 : 0.99;
+        const imgData = canvas.toDataURL('image/jpeg', jpegQuality);
 
         if (!pdf) {
           pdf = new jsPDF({
@@ -98,13 +125,13 @@ export const PdfExportModal: React.FC<PdfExportModalProps> = ({
             unit: 'px',
             format: [nodeW, nodeH],
             hotfixes: ['px_scaling'],
-            compress: true,
+            compress: false,
           });
         } else {
           pdf.addPage([nodeW, nodeH], pageOrientation);
         }
 
-        pdf.addImage(imgData, 'JPEG', 0, 0, nodeW, nodeH);
+        pdf.addImage(imgData, 'JPEG', 0, 0, nodeW, nodeH, undefined, 'SLOW');
       }
 
       if (!pdf) {

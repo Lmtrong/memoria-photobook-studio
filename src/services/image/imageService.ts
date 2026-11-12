@@ -46,51 +46,15 @@ export async function processImageFile(file: File): Promise<{
         if (tCtx) {
           tCtx.drawImage(img, 0, 0, thumbW, thumbH);
         }
-        const thumbnailDataUrl = thumbCanvas.toDataURL('image/jpeg', 0.8);
+        const thumbnailDataUrl = thumbCanvas.toDataURL('image/jpeg', 0.85);
 
-        // If original image is massive (>2000px), create an optimized high-res canvas Blob (max 1920px)
-        // so dragging/sliders on canvas run at 60fps without 4K GPU decoding stutter.
-        const maxCanvasDim = 1920;
-        if (width > maxCanvasDim || height > maxCanvasDim) {
-          let optW = width;
-          let optH = height;
-          if (width > height) {
-            optW = maxCanvasDim;
-            optH = Math.round((height * maxCanvasDim) / width);
-          } else {
-            optH = maxCanvasDim;
-            optW = Math.round((width * maxCanvasDim) / height);
-          }
-          const optCanvas = document.createElement('canvas');
-          optCanvas.width = optW;
-          optCanvas.height = optH;
-          const oCtx = optCanvas.getContext('2d');
-          if (oCtx) {
-            oCtx.drawImage(img, 0, 0, optW, optH);
-          }
-          const outMime = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
-          optCanvas.toBlob(
-            (optBlob) => {
-              URL.revokeObjectURL(objectUrl);
-              resolve({
-                width: optW,
-                height: optH,
-                thumbnailDataUrl,
-                originalBlob: optBlob || safeOriginalBlob,
-              });
-            },
-            outMime,
-            0.9
-          );
-        } else {
-          URL.revokeObjectURL(objectUrl);
-          resolve({
-            width,
-            height,
-            thumbnailDataUrl,
-            originalBlob: safeOriginalBlob,
-          });
-        }
+        URL.revokeObjectURL(objectUrl);
+        resolve({
+          width,
+          height,
+          thumbnailDataUrl,
+          originalBlob: safeOriginalBlob,
+        });
       } catch (err) {
         URL.revokeObjectURL(objectUrl);
         reject(err);

@@ -1,11 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Album, StoredAudio } from '../../types';
 import { FORMAT_DIMENSIONS } from '../../utils/constants';
 import { BookCoverRenderer } from '../book/BookCoverRenderer';
 import { PageSurfaceRenderer } from '../book/PageSurfaceRenderer';
+import { AudioTrimmerModal } from '../dialogs/AudioTrimmerModal';
 import { db } from '../../services/database/db';
+import { publishSharedAlbumLink, syncAlbumToLocalServer } from '../../services/share/shareService';
 import { useI18n } from '../../i18n';
+import { useToastStore } from '../../stores/useToastStore';
 import {
   Play,
   Pause,
@@ -18,6 +22,9 @@ import {
   Repeat,
   Trash2,
   Upload,
+  Link2,
+  ExternalLink,
+  Scissors,
 } from 'lucide-react';
 
 interface SlideshowModalProps {
@@ -34,6 +41,8 @@ export const SlideshowModal: React.FC<SlideshowModalProps> = ({
   onClose,
 }) => {
   const { t } = useI18n();
+  const { addToast } = useToastStore();
+  const navigate = useNavigate();
 
   // Slide 0 = Front cover, 1..N = album pages
   const totalSlides = album.pages.length + 1;
@@ -49,6 +58,8 @@ export const SlideshowModal: React.FC<SlideshowModalProps> = ({
   const [volume, setVolume] = useState(0.75);
   const [isMuted, setIsMuted] = useState(false);
   const [loopMusic, setLoopMusic] = useState(true);
+  const [trimmerOpen, setTrimmerOpen] = useState(false);
+  const [pendingAudioFile, setPendingAudioFile] = useState<File | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [stageScale, setStageScale] = useState(0.85);
@@ -78,15 +89,15 @@ export const SlideshowModal: React.FC<SlideshowModalProps> = ({
     };
   }, [isOpen, album.id]);
 
-  // Compute responsive scale
+  // Compute responsive scale (allow up to 2.0x native rendering so high-res monitors stay razor-sharp)
   useEffect(() => {
     if (!isOpen) return;
     const updateScale = () => {
       const dims = FORMAT_DIMENSIONS[album.format] || FORMAT_DIMENSIONS.landscape;
       const availW = window.innerWidth - 64;
       const availH = window.innerHeight - 170;
-      const nextScale = Math.min(1.05, availW / dims.width, availH / dims.height);
-      setStageScale(Math.max(0.32, nextScale));
+      const nextScale = Math.min(2.0, availW / dims.width, availH / dims.height);
+      setStageScale(Math.max(0.32, Number(nextScale.toFixed(3))));
     };
     updateScale();
     window.addEventListener('resize', updateScale);
@@ -127,23 +138,27 @@ export const SlideshowModal: React.FC<SlideshowModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleUploadAudio = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUploadAudio = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const newRecord: StoredAudio = {
-      id: `audio-${album.id}`,
-      albumId: album.id,
-      name: file.name,
-      mimeType: file.type || 'audio/mpeg',
-      blob: file,
-      createdAt: new Date().toISOString(),
-    };
-    await db.audios.put(newRecord);
+    if (audioRef.current && isMusicPlaying) {
+      audioRef.current.pause();
+      setIsMusicPlaying(false);
+    }
+    setPendingAudioFile(file);
+    setTrimmerOpen(true);
+    e.target.value = '';
+  };
+
+  const handleSaveTrimmedAudio = async (savedAudio: StoredAudio) => {
+    await db.audios.put(savedAudio);
     if (audioUrl) URL.revokeObjectURL(audioUrl);
-    const nextUrl = URL.createObjectURL(file);
-    setAudioRecord(newRecord);
+    const nextUrl = URL.createObjectURL(savedAudio.blob);
+    setAudioRecord(savedAudio);
     setAudioUrl(nextUrl);
-    setIsMusicPlaying(false);
+    setTrimmerOpen(false);
+    setPendingAudioFile(null);
+    syncAlbumToLocalServer(album.id);
   };
 
   const toggleMusicPlayback = () => {
@@ -185,10 +200,10 @@ export const SlideshowModal: React.FC<SlideshowModalProps> = ({
     }
     if (transitionStyle === 'zoom') {
       return {
-        initial: { opacity: 0, scale: 0.92 },
-        animate: { opacity: 1, scale: 1.03 },
-        exit: { opacity: 0, scale: 1.08 },
-        transition: { duration: 1.2, ease: 'easeOut' as const },
+        initial: { opacity: 0, scale: 0.95 },
+        animate: { opacity: 1, scale: 1 },
+        exit: { opacity: 0, scale: 0.98 },
+        transition: { duration: 0.65, ease: 'easeOut' as const },
       };
     }
     return {
@@ -247,6 +262,33 @@ export const SlideshowModal: React.FC<SlideshowModalProps> = ({
               {t.slideshow.transZoom}
             </option>
           </select>
+
+          <button
+            type="button"
+            onClick={async () => {
+              const { shareUrl } = await publishSharedAlbumLink(album.id);
+              navigator.clipboard.writeText(shareUrl).then(() => {
+                addToast(t.slideshow.copiedLinkToast, 'success');
+              });
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gold text-charcoal hover:bg-ivory font-semibold transition-colors"
+          >
+            <Link2 className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">{t.slideshow.copyLinkBtn}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              navigate(`/slideshow/${album.id}`);
+            }}
+            title={t.slideshow.openDedicatedPage}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-terracotta text-ivory transition-colors"
+          >
+            <ExternalLink className="w-3.5 h-3.5 text-gold" />
+            <span className="hidden lg:inline">{t.nav.slideshowLink}</span>
+          </button>
 
           <button
             type="button"
@@ -365,6 +407,22 @@ export const SlideshowModal: React.FC<SlideshowModalProps> = ({
 
               <button
                 type="button"
+                onClick={() => {
+                  if (audioRef.current && isMusicPlaying) {
+                    audioRef.current.pause();
+                    setIsMusicPlaying(false);
+                  }
+                  setPendingAudioFile(null);
+                  setTrimmerOpen(true);
+                }}
+                className="px-2.5 py-1 rounded bg-terracotta text-white font-semibold flex items-center gap-1"
+              >
+                <Scissors className="w-3.5 h-3.5" />
+                <span>Cắt / Ghép</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setIsMuted((m) => !m)}
                 className="p-1 text-ivory/80 hover:text-white"
               >
@@ -405,6 +463,17 @@ export const SlideshowModal: React.FC<SlideshowModalProps> = ({
           )}
         </div>
       </div>
+      <AudioTrimmerModal
+        isOpen={trimmerOpen}
+        albumId={album.id}
+        existingAudio={audioRecord}
+        initialFile={pendingAudioFile}
+        onClose={() => {
+          setTrimmerOpen(false);
+          setPendingAudioFile(null);
+        }}
+        onSaved={handleSaveTrimmedAudio}
+      />
     </div>
   );
 };

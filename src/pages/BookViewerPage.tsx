@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../services/database/db';
+import { loadSharedOrLocalAlbum } from '../services/share/shareService';
 import { Album, AlbumPage } from '../types';
 import { usePhotoUrls } from '../hooks/usePhotoUrls';
 import { FORMAT_DIMENSIONS } from '../utils/constants';
@@ -42,6 +43,7 @@ interface PhysicalSheet {
 
 export const BookViewerPage: React.FC = () => {
   const { albumId } = useParams<{ albumId: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { t } = useI18n();
 
@@ -67,16 +69,18 @@ export const BookViewerPage: React.FC = () => {
 
   const viewerRootRef = useRef<HTMLDivElement>(null);
 
+  const shareKeyParam = searchParams.get('s');
+
   useEffect(() => {
     if (!albumId) return;
-    db.albums.get(albumId).then((found) => {
+    loadSharedOrLocalAlbum(albumId, shareKeyParam).then(({ album: found }) => {
       if (found) {
         setAlbum(found);
       } else {
         navigate('/');
       }
     });
-  }, [albumId, navigate]);
+  }, [albumId, shareKeyParam, navigate]);
 
   const photos = useLiveQuery(
     () => (albumId ? db.photos.where('albumId').equals(albumId).toArray() : []),
@@ -174,11 +178,11 @@ export const BookViewerPage: React.FC = () => {
       if (viewMode === 'double') {
         const scaleW = availW / (dims.width * 2.15);
         const scaleH = availH / (dims.height * 1.08);
-        setBaseScale(Math.max(0.28, Math.min(0.85, Number(Math.min(scaleW, scaleH).toFixed(2)))));
+        setBaseScale(Math.max(0.28, Math.min(1.35, Number(Math.min(scaleW, scaleH).toFixed(2)))));
       } else {
         const scaleW = availW / (dims.width * 1.1);
         const scaleH = availH / (dims.height * 1.08);
-        setBaseScale(Math.max(0.32, Math.min(0.95, Number(Math.min(scaleW, scaleH).toFixed(2)))));
+        setBaseScale(Math.max(0.32, Math.min(1.6, Number(Math.min(scaleW, scaleH).toFixed(2)))));
       }
     };
 
@@ -402,11 +406,12 @@ export const BookViewerPage: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setSlideshowOpen(true)}
+            onClick={() => navigate(`/slideshow/${album.id}`)}
+            title={t.slideshow.openDedicatedPage}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-terracotta text-xs font-medium text-ivory transition-colors"
           >
             <Play className="w-3.5 h-3.5 text-gold" />
-            <span className="hidden lg:inline">{t.nav.slideshow}</span>
+            <span className="hidden lg:inline">{t.nav.slideshowLink}</span>
           </button>
 
           <button

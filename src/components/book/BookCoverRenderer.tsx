@@ -2,6 +2,7 @@ import React from 'react';
 import { AlbumFormat, CoverConfig } from '../../types';
 import { FORMAT_DIMENSIONS } from '../../utils/constants';
 import { BookOpen } from 'lucide-react';
+import { CroppedPhotoImage } from './CroppedPhotoImage';
 
 interface BookCoverRendererProps {
   cover: CoverConfig;
@@ -127,9 +128,11 @@ export const BookCoverRenderer: React.FC<BookCoverRendererProps> = ({
             {/* Cover Photo Window */}
             <div className="w-4/5 flex-1 my-4 relative overflow-hidden bg-black/20 shadow-inner border border-white/15 flex items-center justify-center">
               {coverPhotoUrl ? (
-                <div
-                  className="w-full h-full bg-cover bg-center bg-no-repeat"
-                  style={{ backgroundImage: `url("${coverPhotoUrl}")` }}
+                <CroppedPhotoImage
+                  src={coverPhotoUrl}
+                  slotWidthPx={width * 0.65}
+                  slotHeightPx={height * 0.52}
+                  fitMode="cover"
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center opacity-40 p-4">
@@ -178,9 +181,11 @@ export const BookCoverRenderer: React.FC<BookCoverRendererProps> = ({
 
           <div className="w-full h-[64%] overflow-hidden bg-black/20 shadow-md relative">
             {coverPhotoUrl ? (
-              <div
-                className="w-full h-full bg-cover bg-center bg-no-repeat"
-                style={{ backgroundImage: `url("${coverPhotoUrl}")` }}
+              <CroppedPhotoImage
+                src={coverPhotoUrl}
+                slotWidthPx={width * 0.82}
+                slotHeightPx={height * 0.64}
+                fitMode="cover"
               />
             ) : (
               <div className="w-full h-full flex items-center justify-center opacity-35">
@@ -195,10 +200,14 @@ export const BookCoverRenderer: React.FC<BookCoverRendererProps> = ({
       {cover.layoutStyle === 'full-bleed' && (
         <div className="w-full h-full relative">
           {coverPhotoUrl && (
-            <div
-              className="absolute inset-0 w-full h-full bg-cover bg-center bg-no-repeat"
-              style={{ backgroundImage: `url("${coverPhotoUrl}")` }}
-            />
+            <div className="absolute inset-0 w-full h-full">
+              <CroppedPhotoImage
+                src={coverPhotoUrl}
+                slotWidthPx={width}
+                slotHeightPx={height}
+                fitMode="cover"
+              />
+            </div>
           )}
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/25 to-black/20" />
           <div
@@ -241,14 +250,20 @@ export const BookCoverRenderer: React.FC<BookCoverRendererProps> = ({
           >
             {coverPhotoUrl && (
               <div
-                className="rounded-full overflow-hidden mb-4 border-2 shadow-inner bg-cover bg-center bg-no-repeat"
+                className="rounded-full overflow-hidden mb-4 border-2 shadow-inner relative"
                 style={{
                   width: Math.round(150 * scale),
                   height: Math.round(150 * scale),
                   borderColor: '#C5A059',
-                  backgroundImage: `url("${coverPhotoUrl}")`,
                 }}
-              />
+              >
+                <CroppedPhotoImage
+                  src={coverPhotoUrl}
+                  slotWidthPx={Math.round(150 * scale)}
+                  slotHeightPx={Math.round(150 * scale)}
+                  fitMode="cover"
+                />
+              </div>
             )}
             <p
               className="uppercase tracking-[0.3em] opacity-75 mb-2"

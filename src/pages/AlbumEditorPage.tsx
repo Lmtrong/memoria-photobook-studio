@@ -328,11 +328,12 @@ export const AlbumEditorPage: React.FC = () => {
 
           <button
             type="button"
-            onClick={() => setSlideshowOpen(true)}
+            onClick={() => navigate(`/slideshow/${album.id}`)}
+            title={t.slideshow.openDedicatedPage}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-beige bg-cream/70 hover:bg-beige text-xs font-medium text-charcoal transition-colors"
           >
             <Play className="w-3.5 h-3.5 text-terracotta" />
-            <span className="hidden md:inline">{t.nav.slideshow}</span>
+            <span className="hidden md:inline">{t.nav.slideshowLink}</span>
           </button>
 
           <button

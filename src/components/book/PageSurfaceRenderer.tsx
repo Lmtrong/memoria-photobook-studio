@@ -12,6 +12,7 @@ import { renderPageBorderSvg, renderStickerSvg } from '../../features/stickers/s
 import { getTextFrameWrapperStyle, renderTextFrameOrnaments } from '../../features/text/textFrames';
 import { TEXT_BOX_MAX_CHARS } from '../../types';
 import { SelectedElementType } from '../../stores/useEditorStore';
+import { CroppedPhotoImage } from './CroppedPhotoImage';
 import { ImagePlus, Move, Trash2 } from 'lucide-react';
 import { useI18n } from '../../i18n';
 
@@ -265,16 +266,14 @@ export const PageSurfaceRenderer: React.FC<PageSurfaceRendererProps> = ({
               }}
             >
               {photoUrl ? (
-                <div
-                  className="w-full h-full pointer-events-none select-none will-change-transform bg-no-repeat"
-                  style={{
-                    backgroundImage: `url("${photoUrl}")`,
-                    backgroundSize: slot.fitMode === 'contain' ? 'contain' : 'cover',
-                    backgroundPosition: 'center center',
-                    transform: `scale(${slot.cropZoom || 1}) translate(${slot.cropX || 0}%, ${
-                      slot.cropY || 0
-                    }%)`,
-                  }}
+                <CroppedPhotoImage
+                  src={photoUrl}
+                  slotWidthPx={(slot.width / 100) * width}
+                  slotHeightPx={(slot.height / 100) * height}
+                  fitMode={slot.fitMode || 'cover'}
+                  cropZoom={slot.cropZoom || 1}
+                  cropX={slot.cropX || 0}
+                  cropY={slot.cropY || 0}
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center text-charcoal/45 p-2 text-center border border-dashed border-charcoal/20 w-full h-full">

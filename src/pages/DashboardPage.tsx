@@ -31,6 +31,7 @@ import {
   Image as ImageIcon,
   HardDrive,
   SlidersHorizontal,
+  Play,
 } from 'lucide-react';
 
 export const DashboardPage: React.FC = () => {
@@ -482,6 +483,15 @@ export const DashboardPage: React.FC = () => {
 
                         <button
                           type="button"
+                          onClick={() => navigate(`/slideshow/${album.id}`)}
+                          title={t.nav.slideshowLink}
+                          className="p-2 rounded-xl border border-beige bg-cream/60 text-terracotta hover:bg-terracotta hover:text-white transition-colors"
+                        >
+                          <Play className="w-3.5 h-3.5" />
+                        </button>
+
+                        <button
+                          type="button"
                           onClick={() => {
                             setEditingAlbum(album);
                             setWizardOpen(true);
@@ -589,6 +599,15 @@ export const DashboardPage: React.FC = () => {
                       >
                         <BookOpen className="w-3.5 h-3.5" />
                         <span>{t.dashboard.openBook}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/slideshow/${album.id}`)}
+                        title={t.nav.slideshowLink}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-cream hover:bg-terracotta hover:text-white text-terracotta border border-beige text-xs font-medium transition-colors"
+                      >
+                        <Play className="w-3.5 h-3.5" />
+                        <span className="hidden md:inline">{t.nav.slideshow}</span>
                       </button>
                       <button
                         type="button"
