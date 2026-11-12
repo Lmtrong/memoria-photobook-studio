@@ -32,6 +32,10 @@ export interface SharedAlbumBundle {
   audio: SerializedSharedAudio | null;
 }
 
+// Session-level memoization caches so each photo/audio is compressed at most ONCE per session (0ms on repeat syncs)
+const serializedPhotoCache = new Map<string, string>();
+const serializedAudioCache = new Map<string, string>();
+
 function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -62,19 +66,25 @@ function dataUrlToBlob(dataUrl: string): Blob {
 }
 
 /**
- * Compresses a photo Blob for high-resolution web sharing (max 1600px, WebP/JPEG 0.88)
- * so the shared link loads quickly for visitors while staying crystal-clear on HD monitors.
+ * Compresses a photo Blob for high-resolution web sharing (max 1200px, WebP/JPEG 0.84)
+ * and caches it by `photoId` so subsequent syncs take 0ms.
  */
-async function optimizePhotoBlobForSharing(blob: Blob): Promise<string> {
-  if (blob.size <= 380 * 1024) {
-    return blobToDataUrl(blob);
+async function optimizePhotoBlobForSharing(photoId: string, blob: Blob): Promise<string> {
+  const cached = serializedPhotoCache.get(photoId);
+  if (cached) return cached;
+
+  if (blob.size <= 260 * 1024) {
+    const dataUrl = await blobToDataUrl(blob);
+    serializedPhotoCache.set(photoId, dataUrl);
+    return dataUrl;
   }
+
   return new Promise((resolve) => {
     const url = URL.createObjectURL(blob);
     const img = new Image();
     img.onload = () => {
       URL.revokeObjectURL(url);
-      const maxDim = 1600;
+      const maxDim = 1200;
       const ratio = Math.min(1, maxDim / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
       const w = Math.max(1, Math.round(img.naturalWidth * ratio));
       const h = Math.max(1, Math.round(img.naturalHeight * ratio));
@@ -84,26 +94,42 @@ async function optimizePhotoBlobForSharing(blob: Blob): Promise<string> {
       canvas.height = h;
       const ctx = canvas.getContext('2d');
       if (!ctx) {
-        blobToDataUrl(blob).then(resolve);
+        blobToDataUrl(blob).then((d) => {
+          serializedPhotoCache.set(photoId, d);
+          resolve(d);
+        });
         return;
       }
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(img, 0, 0, w, h);
 
-      // Prefer WebP for crisp quality at small size, fallback to JPEG
-      let dataUrl = canvas.toDataURL('image/webp', 0.86);
+      let dataUrl = canvas.toDataURL('image/webp', 0.84);
       if (!dataUrl.startsWith('data:image/webp')) {
-        dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+        dataUrl = canvas.toDataURL('image/jpeg', 0.84);
       }
+      serializedPhotoCache.set(photoId, dataUrl);
       resolve(dataUrl);
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
-      blobToDataUrl(blob).then(resolve);
+      blobToDataUrl(blob).then((d) => {
+        serializedPhotoCache.set(photoId, d);
+        resolve(d);
+      });
     };
     img.src = url;
   });
+}
+
+async function optimizeAudioBlobForSharing(audio: StoredAudio): Promise<string> {
+  const cacheKey = `${audio.id}:${audio.createdAt}:${audio.blob.size}`;
+  const cached = serializedAudioCache.get(cacheKey);
+  if (cached) return cached;
+
+  const dataUrl = await blobToDataUrl(audio.blob);
+  serializedAudioCache.set(cacheKey, dataUrl);
+  return dataUrl;
 }
 
 /**
@@ -113,7 +139,7 @@ export async function buildSharedAlbumBundle(albumId: string): Promise<SharedAlb
   const album = await db.albums.get(albumId);
   if (!album) return null;
 
-  // Collect only photos used in the album (cover + page slots) so payload is lean
+  // Collect only photos used in the album (cover + page slots) so payload is lean and fast
   const usedPhotoIds = new Set<string>();
   if (album.cover.coverPhotoId) {
     usedPhotoIds.add(album.cover.coverPhotoId);
@@ -128,28 +154,32 @@ export async function buildSharedAlbumBundle(albumId: string): Promise<SharedAlb
   const relevantPhotos = allAlbumPhotos.filter((p) => usedPhotoIds.has(p.id));
 
   const serializedPhotos: SerializedSharedPhoto[] = await Promise.all(
-    relevantPhotos.map(async (p) => ({
-      id: p.id,
-      albumId: p.albumId,
-      name: p.name,
-      mimeType: p.mimeType,
-      width: p.width,
-      height: p.height,
-      dataUrl: await optimizePhotoBlobForSharing(p.originalBlob),
-      thumbnailDataUrl: p.thumbnailDataUrl,
-      createdAt: p.createdAt,
-    }))
+    relevantPhotos.map(async (p) => {
+      const optimizedDataUrl = await optimizePhotoBlobForSharing(p.id, p.originalBlob);
+      return {
+        id: p.id,
+        albumId: p.albumId,
+        name: p.name,
+        mimeType: p.mimeType,
+        width: p.width,
+        height: p.height,
+        dataUrl: optimizedDataUrl,
+        // Omit duplicate thumbnailDataUrl to keep bundle 25% smaller; importer falls back to dataUrl
+        thumbnailDataUrl: '',
+        createdAt: p.createdAt,
+      };
+    })
   );
 
   const audioRec = await db.audios.where('albumId').equals(albumId).first();
   let serializedAudio: SerializedSharedAudio | null = null;
-  if (audioRec && audioRec.blob) {
+  if (audioRec && audioRec.blob && audioRec.blob.size > 0) {
     serializedAudio = {
       id: audioRec.id,
       albumId: audioRec.albumId,
       name: audioRec.name,
       mimeType: audioRec.mimeType,
-      dataUrl: await blobToDataUrl(audioRec.blob),
+      dataUrl: await optimizeAudioBlobForSharing(audioRec),
       duration: audioRec.duration,
       segments: audioRec.segments,
       createdAt: audioRec.createdAt,
@@ -166,81 +196,37 @@ export async function buildSharedAlbumBundle(albumId: string): Promise<SharedAlb
 }
 
 /**
- * Publishes the album bundle to:
- * 1) Local / LAN server endpoint `/api/shared-albums/:albumId` (so anyone on the same server/LAN can open `/slideshow/:albumId` directly)
- * 2) Public Cloud Relay (`https://bytebin.lucko.me/post`) so anyone on the internet clicking `/slideshow/:albumId?s=<key>` sees the album & hears the music!
+ * Uploads the SharedAlbumBundle through `/api/share` (Vercel Serverless Function / Vite Middleware)
+ * and returns the permanent cloud `shareKey` (e.g. `cb_xxxxxx.json`).
  */
-export async function publishSharedAlbumLink(albumId: string): Promise<{
-  shareUrl: string;
-  shareKey: string | null;
-}> {
+export async function uploadAlbumBundleToCloudRelay(albumId: string): Promise<string | null> {
   const bundle = await buildSharedAlbumBundle(albumId);
-  if (!bundle) {
-    return {
-      shareUrl: `${window.location.origin}/slideshow/${albumId}`,
-      shareKey: null,
-    };
-  }
+  if (!bundle) return null;
 
-  const jsonPayload = JSON.stringify(bundle);
-
-  // 1. Sync to local/LAN server middleware (non-blocking if static host)
   try {
-    await fetch(`/api/shared-albums/${encodeURIComponent(albumId)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: jsonPayload,
-    });
-  } catch {
-    // Ignore on pure static hosting
-  }
-
-  // 2. Upload to CORS-enabled public cloud relay (Bytebin) for universal internet sharing
-  let cloudKey: string | null = null;
-  try {
-    const res = await fetch('https://bytebin.lucko.me/post', {
+    const res = await fetch('/api/share', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: jsonPayload,
-    });
-    if (res.ok) {
-      const data = (await res.json()) as { key?: string };
-      if (data && data.key) {
-        cloudKey = data.key;
-        await db.albums.update(albumId, { shareKey: cloudKey });
-      }
-    }
-  } catch {
-    // Fallback to existing shareKey if offline/LAN-only
-    cloudKey = bundle.album.shareKey || null;
-  }
-
-  const baseUrl = `${window.location.origin}/slideshow/${albumId}`;
-  const shareUrl = cloudKey ? `${baseUrl}?s=${encodeURIComponent(cloudKey)}` : baseUrl;
-
-  return {
-    shareUrl,
-    shareKey: cloudKey,
-  };
-}
-
-/**
- * Silently syncs the album bundle to the local/LAN server in the background whenever an album or audio is opened/saved.
- */
-export async function syncAlbumToLocalServer(albumId: string): Promise<void> {
-  try {
-    const bundle = await buildSharedAlbumBundle(albumId);
-    if (!bundle) return;
-    await fetch(`/api/shared-albums/${encodeURIComponent(albumId)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(bundle),
     });
-  } catch {
-    // Ignore if not running local server middleware
+
+    if (res.ok) {
+      const data = (await res.json()) as { ok?: boolean; key?: string };
+      if (data?.key) {
+        await db.albums.update(albumId, {
+          shareKey: data.key,
+          cloudSyncedAt: new Date().toISOString(),
+        });
+        return data.key;
+      }
+    }
+  } catch (err) {
+    console.warn('Cloud relay upload error:', err);
   }
+
+  return bundle.album.shareKey || null;
 }
 
 /**
@@ -252,7 +238,7 @@ async function importBundleIntoLocalDb(bundle: SharedAlbumBundle): Promise<{
 }> {
   const { album, photos, audio } = bundle;
 
-  const restoredPhotos: StoredPhoto[] = photos.map((p) => {
+  const restoredPhotos: StoredPhoto[] = (photos || []).map((p) => {
     const blob = dataUrlToBlob(p.dataUrl);
     return {
       id: p.id,
@@ -300,10 +286,8 @@ async function importBundleIntoLocalDb(bundle: SharedAlbumBundle): Promise<{
 }
 
 /**
- * Loads an album for Slideshow / Viewer:
- * - If `?s=<shareKey>` is present OR if the album is not in the visitor's IndexedDB,
- *   fetches the shared bundle from the Cloud Relay (`bytebin`) or Local Server (`/api/shared-albums/:albumId`),
- *   hydrates IndexedDB, and returns the album + audio!
+ * Fetches a shared album bundle from `/api/share` by `shareKey` or `albumId`,
+ * hydrates the visitor's local IndexedDB, and returns the album + trimmed audio.
  */
 export async function loadSharedOrLocalAlbum(
   albumId: string,
@@ -312,17 +296,23 @@ export async function loadSharedOrLocalAlbum(
   album: Album | null;
   audioRecord: StoredAudio | null;
 }> {
-  // 1. If a cloud shareKey is in the URL and we either don't have the album locally or want the latest shared snapshot:
-  const localAlbum = await db.albums.get(albumId);
-  const localAudio = (await db.audios.where('albumId').equals(albumId).first()) || null;
-
-  if (shareKey && (!localAlbum || !localAudio)) {
+  // 1. If a cloud shareKey is in the URL, fetch the bundle from `/api/share?key=<shareKey>`
+  if (shareKey) {
     try {
-      const res = await fetch(`https://bytebin.lucko.me/${encodeURIComponent(shareKey)}`);
+      const res = await fetch(
+        `/api/share?key=${encodeURIComponent(shareKey)}&albumId=${encodeURIComponent(albumId)}`
+      );
       if (res.ok) {
         const bundle = (await res.json()) as SharedAlbumBundle;
         if (bundle && bundle.album) {
-          return await importBundleIntoLocalDb(bundle);
+          const importedAlbum: Album = {
+            ...bundle.album,
+            shareKey,
+          };
+          return await importBundleIntoLocalDb({
+            ...bundle,
+            album: importedAlbum,
+          });
         }
       }
     } catch (err) {
@@ -330,19 +320,19 @@ export async function loadSharedOrLocalAlbum(
     }
   }
 
-  // 2. If we already have the album in local IndexedDB:
+  // 2. Check local IndexedDB
+  const localAlbum = await db.albums.get(albumId);
+  const localAudio = (await db.audios.where('albumId').equals(albumId).first()) || null;
   if (localAlbum) {
-    // Also trigger background sync to local server so LAN visitors can open `/slideshow/:albumId` anytime
-    syncAlbumToLocalServer(albumId);
     return {
       album: localAlbum,
       audioRecord: localAudio,
     };
   }
 
-  // 3. Not in local IndexedDB -> Try fetching from LAN / Local Server (`/api/shared-albums/:albumId`)
+  // 3. Try fetching by albumId from `/api/share?albumId=<albumId>` (works when on same server/LAN instance)
   try {
-    const res = await fetch(`/api/shared-albums/${encodeURIComponent(albumId)}`);
+    const res = await fetch(`/api/share?albumId=${encodeURIComponent(albumId)}`);
     if (res.ok) {
       const bundle = (await res.json()) as SharedAlbumBundle;
       if (bundle && bundle.album) {
@@ -351,21 +341,6 @@ export async function loadSharedOrLocalAlbum(
     }
   } catch {
     // ignore
-  }
-
-  // 4. Last resort: if shareKey was present even if step 1 skipped
-  if (shareKey) {
-    try {
-      const res = await fetch(`https://bytebin.lucko.me/${encodeURIComponent(shareKey)}`);
-      if (res.ok) {
-        const bundle = (await res.json()) as SharedAlbumBundle;
-        if (bundle && bundle.album) {
-          return await importBundleIntoLocalDb(bundle);
-        }
-      }
-    } catch {
-      // ignore
-    }
   }
 
   return {

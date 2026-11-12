@@ -70,7 +70,7 @@ export async function decodeAudioBlob(
  */
 export async function renderSplicedAudioSegments(
   segments: RenderSegmentInput[],
-  targetSampleRate = 24000
+  targetSampleRate = 16000
 ): Promise<{ blob: Blob; duration: number }> {
   if (segments.length === 0) {
     throw new Error('No audio segments to render');

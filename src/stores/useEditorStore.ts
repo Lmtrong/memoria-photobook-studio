@@ -224,6 +224,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       try {
         const albumToSave: Album = {
           ...currentAlbum,
+          shareKey: undefined,
           updatedAt: new Date().toISOString(),
         };
         await db.albums.put(albumToSave);

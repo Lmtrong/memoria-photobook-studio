@@ -1,9 +1,27 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+// @ts-expect-error JS serverless handler
+import shareHandler from './api/share.js'
+
+function memoriaShareApiPlugin(): Plugin {
+  return {
+    name: 'memoria-share-api',
+    configureServer(server) {
+      server.middlewares.use('/api/share', (req, res) => {
+        shareHandler(req, res)
+      })
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use('/api/share', (req, res) => {
+        shareHandler(req, res)
+      })
+    },
+  }
+}
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), memoriaShareApiPlugin()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

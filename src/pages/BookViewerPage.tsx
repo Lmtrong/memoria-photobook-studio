@@ -420,7 +420,15 @@ export const BookViewerPage: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => navigate(`/slideshow/${album.id}`)}
+            onClick={() =>
+              navigate(
+                `/slideshow/${album.id}${
+                  album.shareKey || shareKeyParam
+                    ? `?s=${encodeURIComponent(album.shareKey || shareKeyParam || '')}`
+                    : ''
+                }`
+              )
+            }
             title={t.slideshow.openDedicatedPage}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-terracotta text-xs font-medium text-ivory transition-colors"
           >

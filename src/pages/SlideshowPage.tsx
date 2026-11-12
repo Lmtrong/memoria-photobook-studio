@@ -4,7 +4,6 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../services/database/db';
 import {
-  isSupabaseConfigured,
   loadAlbumForPresentation,
   syncAlbumToCloudInBackground,
 } from '../services/supabase/supabaseService';
@@ -52,7 +51,7 @@ interface SlideItem {
 
 export const SlideshowPage: React.FC = () => {
   const { albumId } = useParams<{ albumId: string }>();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { t, lang } = useI18n();
   const isVi = lang === 'vi';
@@ -69,6 +68,7 @@ export const SlideshowPage: React.FC = () => {
   const [transitionStyle, setTransitionStyle] = useState<'fade' | 'slide' | 'zoom'>('fade');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [isPreparingLink, setIsPreparingLink] = useState(false);
   const [hudVisible, setHudVisible] = useState(true);
 
   // Audio state
@@ -111,6 +111,10 @@ export const SlideshowPage: React.FC = () => {
         setAlbum(loadedAlbum);
         setRemotePhotoUrls(rUrls);
 
+        if (loadedAlbum.shareKey && loadedAlbum.shareKey !== shareKeyParam) {
+          setSearchParams({ s: loadedAlbum.shareKey }, { replace: true });
+        }
+
         if (localAudio && localAudio.blob && localAudio.blob.size > 0) {
           setAudioRecord(localAudio);
           createdAudioUrl = URL.createObjectURL(localAudio.blob);
@@ -124,8 +128,9 @@ export const SlideshowPage: React.FC = () => {
         if (canUserEditAlbum(loadedAlbum, useAuthStore.getState().currentUser)) {
           syncAlbumToCloudInBackground(loadedAlbum.id, useAuthStore.getState().currentUser).then(
             (nextKey) => {
-              if (mounted && nextKey && nextKey !== loadedAlbum.shareKey) {
+              if (mounted && nextKey) {
                 setAlbum((prev) => (prev ? { ...prev, shareKey: nextKey } : prev));
+                setSearchParams({ s: nextKey }, { replace: true });
               }
             }
           );
@@ -395,26 +400,35 @@ export const SlideshowPage: React.FC = () => {
     audioRef.current.loop = loopMusic;
   }, [volume, isMuted, loopMusic]);
 
-  // Instant 0ms Copy Link (uses Supabase URL or pre-synced shareKey immediately without blocking)
-  const handleCopyShareLink = () => {
-    if (!album) return;
+  // Copy Share Link: always includes `?s=<shareKey>` so anyone on any device/browser opens the exact slideshow + music
+  const handleCopyShareLink = async () => {
+    if (!album || isPreparingLink) return;
     const base = `${window.location.origin}/slideshow/${album.id}`;
-    const key = album.shareKey || shareKeyParam;
-    const shareUrl =
-      !isSupabaseConfigured() && key ? `${base}?s=${encodeURIComponent(key)}` : base;
+    let key = album.shareKey || shareKeyParam;
 
-    navigator.clipboard.writeText(shareUrl).catch(() => {});
+    if (!key && isOwner) {
+      setIsPreparingLink(true);
+      try {
+        key = await syncAlbumToCloudInBackground(album.id, currentUser);
+        if (key) {
+          setAlbum((prev) => (prev ? { ...prev, shareKey: key! } : prev));
+          setSearchParams({ s: key }, { replace: true });
+        }
+      } finally {
+        setIsPreparingLink(false);
+      }
+    }
+
+    const shareUrl = key ? `${base}?s=${encodeURIComponent(key)}` : base;
+
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+    } catch {
+      // Fallback for older browsers
+    }
     setCopiedLink(true);
     addToast(t.slideshow.copiedLinkToast, 'success');
     window.setTimeout(() => setCopiedLink(false), 2000);
-
-    if (isOwner) {
-      syncAlbumToCloudInBackground(album.id, currentUser).then((nextKey) => {
-        if (nextKey && nextKey !== album.shareKey) {
-          setAlbum((prev) => (prev ? { ...prev, shareKey: nextKey } : prev));
-        }
-      });
-    }
   };
 
   // Selecting an audio file opens the Audio Trimmer & Splicer Studio so the user can cut/splice instead of inserting the whole song
@@ -441,9 +455,12 @@ export const SlideshowPage: React.FC = () => {
     setPendingAudioFile(null);
 
     if (album) {
+      await db.albums.update(album.id, { shareKey: undefined });
+      setAlbum((prev) => (prev ? { ...prev, shareKey: undefined } : prev));
       syncAlbumToCloudInBackground(album.id, currentUser).then((nextKey) => {
         if (nextKey) {
           setAlbum((prev) => (prev ? { ...prev, shareKey: nextKey } : prev));
+          setSearchParams({ s: nextKey }, { replace: true });
         }
       });
     }
@@ -586,7 +603,15 @@ export const SlideshowPage: React.FC = () => {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => navigate(`/viewer/${album.id}`)}
+            onClick={() =>
+              navigate(
+                `/viewer/${album.id}${
+                  album.shareKey || shareKeyParam
+                    ? `?s=${encodeURIComponent(album.shareKey || shareKeyParam || '')}`
+                    : ''
+                }`
+              )
+            }
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-medium text-ivory transition-colors"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
@@ -652,11 +677,24 @@ export const SlideshowPage: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2.5 text-xs">
           <button
             type="button"
+            disabled={isPreparingLink}
             onClick={handleCopyShareLink}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gold text-charcoal hover:bg-ivory font-semibold transition-colors shadow-xs"
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gold text-charcoal hover:bg-ivory disabled:opacity-70 font-semibold transition-colors shadow-xs"
           >
-            {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Link2 className="w-3.5 h-3.5" />}
-            <span>{t.slideshow.copyLinkBtn}</span>
+            {isPreparingLink ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : copiedLink ? (
+              <Check className="w-3.5 h-3.5" />
+            ) : (
+              <Link2 className="w-3.5 h-3.5" />
+            )}
+            <span>
+              {isPreparingLink
+                ? isVi
+                  ? 'Đang tạo link...'
+                  : 'Preparing link...'
+                : t.slideshow.copyLinkBtn}
+            </span>
           </button>
 
           <div className="hidden sm:flex items-center gap-1 bg-white/10 px-2.5 py-1.5 rounded-xl border border-white/10">

@@ -7,6 +7,8 @@ import { BookCoverRenderer } from '../book/BookCoverRenderer';
 import { PageSurfaceRenderer } from '../book/PageSurfaceRenderer';
 import { AudioTrimmerModal } from '../dialogs/AudioTrimmerModal';
 import { db } from '../../services/database/db';
+import { syncAlbumToCloudInBackground } from '../../services/supabase/supabaseService';
+import { useAuthStore } from '../../stores/useAuthStore';
 import { useI18n } from '../../i18n';
 import { useToastStore } from '../../stores/useToastStore';
 import {
@@ -263,8 +265,17 @@ export const SlideshowModal: React.FC<SlideshowModalProps> = ({
 
           <button
             type="button"
-            onClick={() => {
-              const shareUrl = `${window.location.origin}/slideshow/${album.id}`;
+            onClick={async () => {
+              const base = `${window.location.origin}/slideshow/${album.id}`;
+              let key = album.shareKey;
+              if (!key) {
+                key =
+                  (await syncAlbumToCloudInBackground(
+                    album.id,
+                    useAuthStore.getState().currentUser
+                  )) || undefined;
+              }
+              const shareUrl = key ? `${base}?s=${encodeURIComponent(key)}` : base;
               navigator.clipboard.writeText(shareUrl).then(() => {
                 addToast(t.slideshow.copiedLinkToast, 'success');
               });

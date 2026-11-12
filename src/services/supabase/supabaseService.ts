@@ -1,6 +1,6 @@
 import { db, StoredUserAccount } from '../database/db';
 import { Album, AudioSegmentConfig, StoredAudio, UserProfile } from '../../types';
-import { buildSharedAlbumBundle, loadSharedOrLocalAlbum } from '../share/shareService';
+import { loadSharedOrLocalAlbum, uploadAlbumBundleToCloudRelay } from '../share/shareService';
 
 const SUPABASE_CONFIG_STORAGE_KEY = 'memoria_supabase_config_v1';
 
@@ -492,26 +492,9 @@ export function syncAlbumToCloudInBackground(
         }
       }
 
-      // PATH B: Also maintain a pre-generated cloud shareKey in the background so even without Supabase env vars on other devices, `?s=` works with 0ms copy time
-      const bundle = await buildSharedAlbumBundle(albumId);
-      if (bundle) {
-        const res = await fetch('https://bytebin.lucko.me/post', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(bundle),
-        });
-        if (res.ok) {
-          const data = (await res.json()) as { key?: string };
-          if (data?.key) {
-            await db.albums.update(albumId, {
-              shareKey: data.key,
-              cloudSyncedAt: new Date().toISOString(),
-            });
-            return data.key;
-          }
-        }
-      }
-      return album.shareKey || null;
+      // PATH B: Always maintain a pre-generated cloud shareKey via `/api/share` so anyone on any device opening `?s=<key>` sees the exact album, photos, and trimmed music!
+      const cloudKey = await uploadAlbumBundleToCloudRelay(albumId);
+      return cloudKey || album.shareKey || null;
     } catch (err) {
       console.warn('Background cloud sync warning:', err);
       return null;
@@ -653,17 +636,15 @@ export async function loadAlbumForPresentation(
     }
   }
 
-  // 3. Fallback: If `?s=<shareKey>` is present in the URL, hydrate from cloud relay bundle
-  if (shareKeyParam) {
-    const hydrated = await loadSharedOrLocalAlbum(albumId, shareKeyParam);
-    if (hydrated.album) {
-      return {
-        album: hydrated.album,
-        remotePhotoUrls: {},
-        remoteAudioUrl: null,
-        localAudio: hydrated.audioRecord,
-      };
-    }
+  // 3. Fallback: Hydrate from `/api/share` cloud relay bundle (via `?s=<shareKey>` or `albumId`)
+  const hydrated = await loadSharedOrLocalAlbum(albumId, shareKeyParam);
+  if (hydrated.album) {
+    return {
+      album: hydrated.album,
+      remotePhotoUrls: {},
+      remoteAudioUrl: null,
+      localAudio: hydrated.audioRecord,
+    };
   }
 
   return {
