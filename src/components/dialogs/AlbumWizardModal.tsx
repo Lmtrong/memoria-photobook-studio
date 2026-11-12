@@ -16,6 +16,8 @@ import { createPageFromLayout, db } from '../../services/database/db';
 import { isSupportedImageFile, processImageFile } from '../../services/image/imageService';
 import { useI18n } from '../../i18n';
 import { useToastStore } from '../../stores/useToastStore';
+import { useAuthStore } from '../../stores/useAuthStore';
+import { syncAlbumToCloudInBackground } from '../../services/supabase/supabaseService';
 import { BookCoverRenderer } from '../book/BookCoverRenderer';
 import {
   X,
@@ -44,6 +46,7 @@ export const AlbumWizardModal: React.FC<AlbumWizardModalProps> = ({
 }) => {
   const { lang, t } = useI18n();
   const { addToast } = useToastStore();
+  const { currentUser } = useAuthStore();
 
   const [step, setStep] = useState<number>(1);
   const [title, setTitle] = useState('');
@@ -98,7 +101,7 @@ export const AlbumWizardModal: React.FC<AlbumWizardModalProps> = ({
       const defaultTheme = THEME_PRESETS['luxury-minimalist'];
       setTitle('');
       setDescription('');
-      setAuthor('');
+      setAuthor(currentUser?.displayName || '');
       setCreatedAtDate(new Date().toISOString().slice(0, 10));
       setFormat('landscape');
       setThemeId('luxury-minimalist');
@@ -199,6 +202,9 @@ export const AlbumWizardModal: React.FC<AlbumWizardModalProps> = ({
       if (editingAlbum) {
         const updatedAlbum: Album = {
           ...editingAlbum,
+          ownerId: editingAlbum.ownerId || currentUser?.id,
+          ownerUsername: editingAlbum.ownerUsername || currentUser?.username,
+          ownerName: editingAlbum.ownerName || currentUser?.displayName,
           title: title.trim(),
           description: description.trim(),
           author: author.trim(),
@@ -208,6 +214,7 @@ export const AlbumWizardModal: React.FC<AlbumWizardModalProps> = ({
           cover: coverConfig,
         };
         await db.albums.put(updatedAlbum);
+        syncAlbumToCloudInBackground(updatedAlbum.id, currentUser);
         onCreatedOrUpdated(updatedAlbum, false);
       } else {
         // Build initial pages according to Step 4 configuration
@@ -247,9 +254,13 @@ export const AlbumWizardModal: React.FC<AlbumWizardModalProps> = ({
 
         const newAlbum: Album = {
           id: albumId,
+          ownerId: currentUser?.id,
+          ownerUsername: currentUser?.username,
+          ownerName: currentUser?.displayName,
+          isPublic: true,
           title: title.trim(),
           description: description.trim(),
-          author: author.trim(),
+          author: author.trim() || currentUser?.displayName || 'Memoria Studio',
           createdAt: new Date(createdAtDate).toISOString(),
           updatedAt: now,
           format,
@@ -259,6 +270,7 @@ export const AlbumWizardModal: React.FC<AlbumWizardModalProps> = ({
         };
 
         await db.albums.put(newAlbum);
+        syncAlbumToCloudInBackground(newAlbum.id, currentUser);
         addToast(t.common.toastAlbumCreated, 'success');
         onCreatedOrUpdated(newAlbum, true);
       }

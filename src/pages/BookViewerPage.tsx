@@ -1,7 +1,9 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../services/database/db';
+import { loadAlbumForPresentation } from '../services/supabase/supabaseService';
+import { useAuthStore, canUserEditAlbum } from '../stores/useAuthStore';
 import { Album, AlbumPage } from '../types';
 import { usePhotoUrls } from '../hooks/usePhotoUrls';
 import { FORMAT_DIMENSIONS } from '../utils/constants';
@@ -42,10 +44,13 @@ interface PhysicalSheet {
 
 export const BookViewerPage: React.FC = () => {
   const { albumId } = useParams<{ albumId: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { t } = useI18n();
+  const { currentUser } = useAuthStore();
 
   const [album, setAlbum] = useState<Album | null>(null);
+  const [remotePhotoUrls, setRemotePhotoUrls] = useState<Record<string, string>>({});
   const [viewMode, setViewMode] = useState<'double' | 'single'>(() =>
     window.innerWidth < 768 ? 'single' : 'double'
   );
@@ -67,23 +72,34 @@ export const BookViewerPage: React.FC = () => {
 
   const viewerRootRef = useRef<HTMLDivElement>(null);
 
+  const shareKeyParam = searchParams.get('s');
+
   useEffect(() => {
     if (!albumId) return;
-    db.albums.get(albumId).then((found) => {
-      if (found) {
-        setAlbum(found);
-      } else {
-        navigate('/');
+    loadAlbumForPresentation(albumId, shareKeyParam).then(
+      ({ album: found, remotePhotoUrls: rUrls }) => {
+        if (found) {
+          setAlbum(found);
+          setRemotePhotoUrls(rUrls);
+        } else {
+          navigate('/');
+        }
       }
-    });
-  }, [albumId, navigate]);
+    );
+  }, [albumId, shareKeyParam, navigate]);
 
   const photos = useLiveQuery(
     () => (albumId ? db.photos.where('albumId').equals(albumId).toArray() : []),
     [albumId],
     []
   );
-  const photoUrls = usePhotoUrls(photos);
+  const localPhotoUrls = usePhotoUrls(photos);
+  const photoUrls = useMemo(
+    () => ({ ...remotePhotoUrls, ...localPhotoUrls }),
+    [remotePhotoUrls, localPhotoUrls]
+  );
+
+  const isOwner = canUserEditAlbum(album, currentUser);
 
   // Build physical 2-sided sheets for realistic 3D book flipping
   const sheets = useMemo<PhysicalSheet[]>(() => {
@@ -351,14 +367,16 @@ export const BookViewerPage: React.FC = () => {
             <span className="hidden sm:inline">{t.nav.backToDashboard}</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => navigate(`/editor/${album.id}`)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-terracotta text-xs font-medium text-ivory transition-colors"
-          >
-            <Pencil className="w-3.5 h-3.5 text-gold" />
-            <span className="hidden sm:inline">{t.nav.editAlbum}</span>
-          </button>
+          {isOwner && (
+            <button
+              type="button"
+              onClick={() => navigate(`/editor/${album.id}`)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-terracotta text-xs font-medium text-ivory transition-colors"
+            >
+              <Pencil className="w-3.5 h-3.5 text-gold" />
+              <span className="hidden sm:inline">{t.nav.editAlbum}</span>
+            </button>
+          )}
 
           <div className="h-5 w-px bg-white/15 hidden md:block" />
 

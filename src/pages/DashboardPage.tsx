@@ -12,6 +12,13 @@ import { Album } from '../types';
 import { FORMAT_DIMENSIONS, THEME_PRESETS } from '../utils/constants';
 import { useI18n } from '../i18n';
 import { useToastStore } from '../stores/useToastStore';
+import { useAuthStore, canUserEditAlbum } from '../stores/useAuthStore';
+import {
+  deleteAlbumFromSupabase,
+  isSupabaseConfigured,
+  pullUserAlbumsFromSupabase,
+  syncAlbumToCloudInBackground,
+} from '../services/supabase/supabaseService';
 import { BookCoverRenderer } from '../components/book/BookCoverRenderer';
 import { AlbumWizardModal } from '../components/dialogs/AlbumWizardModal';
 import { ConfirmDialog } from '../components/dialogs/ConfirmDialog';
@@ -32,12 +39,21 @@ import {
   HardDrive,
   SlidersHorizontal,
   Play,
+  UserCheck,
+  LogOut,
+  Database,
 } from 'lucide-react';
 
 export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const { lang, t, toggleLanguage } = useI18n();
   const { addToast } = useToastStore();
+  const {
+    currentUser,
+    logout,
+    setAuthModalOpen,
+    setCloudConfigModalOpen,
+  } = useAuthStore();
 
   const [isInitializing, setIsInitializing] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -66,6 +82,12 @@ export const DashboardPage: React.FC = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (currentUser) {
+      pullUserAlbumsFromSupabase(currentUser.id).catch(() => {});
+    }
+  }, [currentUser]);
+
   const albums = useLiveQuery(() => db.albums.toArray(), [], []);
   const allPhotos = useLiveQuery(() => db.photos.toArray(), [], []);
 
@@ -93,6 +115,14 @@ export const DashboardPage: React.FC = () => {
     if (!albums) return [];
     const q = searchQuery.trim().toLowerCase();
     const list = albums.filter((a) => {
+      // Role-based filtering: each logged-in user sees their own albums (or unclaimed local sample albums)
+      if (currentUser) {
+        if (a.ownerId && a.ownerId !== currentUser.id) return false;
+      } else {
+        // When logged out, only show unclaimed local/sample albums
+        if (a.ownerId) return false;
+      }
+
       if (!q) return true;
       return (
         a.title.toLowerCase().includes(q) ||
@@ -113,11 +143,20 @@ export const DashboardPage: React.FC = () => {
       }
       return b.pages.length - a.pages.length;
     });
-  }, [albums, searchQuery, sortBy]);
+  }, [albums, searchQuery, sortBy, currentUser]);
 
   const handleDuplicate = async (album: Album) => {
+    if (!canUserEditAlbum(album, currentUser)) return;
     const duplicated = await duplicateAlbumInDb(album.id, t.common.duplicatedSuffix);
     if (duplicated) {
+      if (currentUser) {
+        await db.albums.update(duplicated.id, {
+          ownerId: currentUser.id,
+          ownerUsername: currentUser.username,
+          ownerName: currentUser.displayName,
+        });
+        syncAlbumToCloudInBackground(duplicated.id, currentUser);
+      }
       addToast(t.common.toastAlbumDuplicated, 'success');
       estimateStorageUsage().then(setStorageInfo);
     }
@@ -125,7 +164,9 @@ export const DashboardPage: React.FC = () => {
 
   const handleConfirmDelete = async () => {
     if (!deletingAlbum) return;
-    await deleteAlbumFromDb(deletingAlbum.id);
+    const targetId = deletingAlbum.id;
+    await deleteAlbumFromDb(targetId);
+    deleteAlbumFromSupabase(targetId, currentUser?.id);
     setDeletingAlbum(null);
     addToast(t.common.toastAlbumDeleted, 'info');
     estimateStorageUsage().then(setStorageInfo);
@@ -160,33 +201,83 @@ export const DashboardPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Right Actions: Storage Indicator, Language Switcher & Create Button */}
-          <div className="flex items-center gap-2.5 sm:gap-4">
+          {/* Right Actions: Supabase Cloud, User Account, Language Switcher & Create Button */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Supabase Cloud Config Button */}
+            <button
+              type="button"
+              onClick={() => setCloudConfigModalOpen(true)}
+              title="Cấu hình cơ sở dữ liệu Supabase Cloud"
+              className={`hidden lg:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium transition-colors ${
+                isSupabaseConfigured()
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100'
+                  : 'bg-cream border-beige text-charcoal/75 hover:bg-beige/60'
+              }`}
+            >
+              <Database className="w-3.5 h-3.5 text-terracotta" />
+              <span>{isSupabaseConfigured() ? 'Supabase: Đã kết nối' : 'Supabase Cloud'}</span>
+            </button>
+
             {/* Storage Pill */}
             <div
               title={`${t.nav.storageUsage}: ${storageInfo.usedMB} MB / ${storageInfo.quotaMB} MB`}
-              className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-cream border border-beige text-xs text-charcoal/75"
+              className="hidden xl:flex items-center gap-2 px-3 py-1.5 rounded-full bg-cream border border-beige text-xs text-charcoal/75"
             >
               <HardDrive className="w-3.5 h-3.5 text-terracotta" />
-              <span>
-                {storageInfo.usedMB} MB
-              </span>
+              <span>{storageInfo.usedMB} MB</span>
             </div>
+
+            {/* User Account / Auth Button */}
+            {currentUser ? (
+              <div className="flex items-center gap-1.5 bg-cream border border-beige rounded-xl px-2.5 py-1.5 text-xs">
+                <UserCheck className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                <span className="font-semibold text-charcoal max-w-[120px] truncate">
+                  @{currentUser.username}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    logout();
+                    addToast(
+                      lang === 'vi' ? 'Đã đăng xuất tài khoản.' : 'Signed out.',
+                      'info'
+                    );
+                  }}
+                  title={lang === 'vi' ? 'Đăng xuất' : 'Sign Out'}
+                  className="p-1 rounded-lg hover:bg-red-100 text-charcoal/60 hover:text-red-700 transition-colors"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setAuthModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-terracotta/50 bg-cream hover:bg-terracotta hover:text-white text-xs font-semibold text-charcoal transition-colors"
+              >
+                <UserCheck className="w-3.5 h-3.5 text-terracotta" />
+                <span>{lang === 'vi' ? 'Đăng nhập / Đăng ký' : 'Sign In / Register'}</span>
+              </button>
+            )}
 
             {/* Language Switcher */}
             <button
               type="button"
               onClick={toggleLanguage}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-beige bg-cream/60 hover:bg-beige/60 text-xs font-semibold uppercase tracking-wider text-charcoal transition-colors"
+              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg border border-beige bg-cream/60 hover:bg-beige/60 text-xs font-semibold uppercase tracking-wider text-charcoal transition-colors"
             >
               <Globe className="w-3.5 h-3.5 text-terracotta" />
-              <span>{lang === 'vi' ? 'VI • Tiếng Việt' : 'EN • English'}</span>
+              <span>{lang === 'vi' ? 'VI' : 'EN'}</span>
             </button>
 
             {/* Primary Create Button */}
             <button
               type="button"
               onClick={() => {
+                if (!currentUser) {
+                  setAuthModalOpen(true);
+                  return;
+                }
                 setEditingAlbum(null);
                 setWizardOpen(true);
               }}
@@ -218,6 +309,10 @@ export const DashboardPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
+                  if (!currentUser) {
+                    setAuthModalOpen(true);
+                    return;
+                  }
                   setEditingAlbum(null);
                   setWizardOpen(true);
                 }}
@@ -226,15 +321,15 @@ export const DashboardPage: React.FC = () => {
                 <Plus className="w-4 h-4" />
                 <span>{t.nav.createAlbum}</span>
               </button>
-              {albums && albums.length > 0 && (
+              {filteredAlbums.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => navigate(`/viewer/${albums[0].id}`)}
+                  onClick={() => navigate(`/viewer/${filteredAlbums[0].id}`)}
                   className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-ivory hover:bg-cream text-charcoal border border-beige text-sm font-medium transition-colors"
                 >
                   <BookOpen className="w-4 h-4 text-terracotta" />
                   <span>
-                    {t.dashboard.openBook} "{albums[0].title}"
+                    {t.dashboard.openBook} "{filteredAlbums[0].title}"
                   </span>
                 </button>
               )}

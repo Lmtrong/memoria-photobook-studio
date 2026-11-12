@@ -1,8 +1,14 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../services/database/db';
+import {
+  isSupabaseConfigured,
+  loadAlbumForPresentation,
+  syncAlbumToCloudInBackground,
+} from '../services/supabase/supabaseService';
+import { useAuthStore, canUserEditAlbum } from '../stores/useAuthStore';
 import { Album, AlbumPage, StoredAudio } from '../types';
 import { usePhotoUrls } from '../hooks/usePhotoUrls';
 import { FORMAT_DIMENSIONS } from '../utils/constants';
@@ -46,12 +52,15 @@ interface SlideItem {
 
 export const SlideshowPage: React.FC = () => {
   const { albumId } = useParams<{ albumId: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { t, lang } = useI18n();
   const isVi = lang === 'vi';
   const { addToast } = useToastStore();
+  const { currentUser } = useAuthStore();
 
   const [album, setAlbum] = useState<Album | null>(null);
+  const [remotePhotoUrls, setRemotePhotoUrls] = useState<Record<string, string>>({});
   const [isLoadingAlbum, setIsLoadingAlbum] = useState(true);
   const [presentationMode, setPresentationMode] = useState<'single' | 'spread'>('single');
   const [currentSlide, setCurrentSlide] = useState(0);
@@ -83,28 +92,43 @@ export const SlideshowPage: React.FC = () => {
   const [stageScale, setStageScale] = useState(1);
   const [stagePadding, setStagePadding] = useState({ top: 84, bottom: 80 });
 
-  // Load album & audio directly from IndexedDB (instant, zero lag)
+  const shareKeyParam = searchParams.get('s');
+
+  // Load album & audio (instant from IndexedDB for owner, or from Supabase Cloud / Share Key for visitors)
   useEffect(() => {
     if (!albumId) return;
     let mounted = true;
     let createdAudioUrl: string | null = null;
 
     setIsLoadingAlbum(true);
-    Promise.all([
-      db.albums.get(albumId),
-      db.audios.where('albumId').equals(albumId).first(),
-    ])
-      .then(([loadedAlbum, loadedAudio]) => {
+    loadAlbumForPresentation(albumId, shareKeyParam)
+      .then(({ album: loadedAlbum, remotePhotoUrls: rUrls, remoteAudioUrl, localAudio }) => {
         if (!mounted) return;
         if (!loadedAlbum) {
           navigate('/');
           return;
         }
         setAlbum(loadedAlbum);
-        if (loadedAudio && loadedAudio.blob) {
-          setAudioRecord(loadedAudio);
-          createdAudioUrl = URL.createObjectURL(loadedAudio.blob);
+        setRemotePhotoUrls(rUrls);
+
+        if (localAudio && localAudio.blob && localAudio.blob.size > 0) {
+          setAudioRecord(localAudio);
+          createdAudioUrl = URL.createObjectURL(localAudio.blob);
           setAudioUrl(createdAudioUrl);
+        } else if (remoteAudioUrl) {
+          setAudioRecord(localAudio);
+          setAudioUrl(remoteAudioUrl);
+        }
+
+        // If owner on local device, silently sync to Supabase/cloud in background so share link is always ready
+        if (canUserEditAlbum(loadedAlbum, useAuthStore.getState().currentUser)) {
+          syncAlbumToCloudInBackground(loadedAlbum.id, useAuthStore.getState().currentUser).then(
+            (nextKey) => {
+              if (mounted && nextKey && nextKey !== loadedAlbum.shareKey) {
+                setAlbum((prev) => (prev ? { ...prev, shareKey: nextKey } : prev));
+              }
+            }
+          );
         }
       })
       .finally(() => {
@@ -116,14 +140,20 @@ export const SlideshowPage: React.FC = () => {
       if (createdAudioUrl) URL.revokeObjectURL(createdAudioUrl);
       setIsMusicPlaying(false);
     };
-  }, [albumId, navigate]);
+  }, [albumId, shareKeyParam, navigate]);
 
   const photos = useLiveQuery(
     () => (albumId ? db.photos.where('albumId').equals(albumId).toArray() : []),
     [albumId],
     []
   );
-  const photoUrls = usePhotoUrls(photos);
+  const localPhotoUrls = usePhotoUrls(photos);
+  const photoUrls = useMemo(
+    () => ({ ...remotePhotoUrls, ...localPhotoUrls }),
+    [remotePhotoUrls, localPhotoUrls]
+  );
+
+  const isOwner = canUserEditAlbum(album, currentUser);
 
   // Automatically start music when audioUrl is ready (or show 1-click unlock if browser blocks autoplay)
   useEffect(() => {
@@ -365,18 +395,31 @@ export const SlideshowPage: React.FC = () => {
     audioRef.current.loop = loopMusic;
   }, [volume, isMuted, loopMusic]);
 
-  // Instant 0ms Copy Link (no heavy encoding or network lag)
+  // Instant 0ms Copy Link (uses Supabase URL or pre-synced shareKey immediately without blocking)
   const handleCopyShareLink = () => {
     if (!album) return;
-    const shareUrl = `${window.location.origin}/slideshow/${album.id}`;
+    const base = `${window.location.origin}/slideshow/${album.id}`;
+    const key = album.shareKey || shareKeyParam;
+    const shareUrl =
+      !isSupabaseConfigured() && key ? `${base}?s=${encodeURIComponent(key)}` : base;
+
     navigator.clipboard.writeText(shareUrl).catch(() => {});
     setCopiedLink(true);
     addToast(t.slideshow.copiedLinkToast, 'success');
     window.setTimeout(() => setCopiedLink(false), 2000);
+
+    if (isOwner) {
+      syncAlbumToCloudInBackground(album.id, currentUser).then((nextKey) => {
+        if (nextKey && nextKey !== album.shareKey) {
+          setAlbum((prev) => (prev ? { ...prev, shareKey: nextKey } : prev));
+        }
+      });
+    }
   };
 
   // Selecting an audio file opens the Audio Trimmer & Splicer Studio so the user can cut/splice instead of inserting the whole song
   const handleSelectAudioFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!isOwner) return;
     const file = e.target.files?.[0];
     if (!file) return;
     if (audioRef.current && isMusicPlaying) {
@@ -390,17 +433,25 @@ export const SlideshowPage: React.FC = () => {
 
   const handleSaveTrimmedAudio = async (savedAudio: StoredAudio) => {
     await db.audios.put(savedAudio);
-    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    if (audioUrl && audioUrl.startsWith('blob:')) URL.revokeObjectURL(audioUrl);
     const nextUrl = URL.createObjectURL(savedAudio.blob);
     setAudioRecord(savedAudio);
     setAudioUrl(nextUrl);
     setTrimmerOpen(false);
     setPendingAudioFile(null);
 
+    if (album) {
+      syncAlbumToCloudInBackground(album.id, currentUser).then((nextKey) => {
+        if (nextKey) {
+          setAlbum((prev) => (prev ? { ...prev, shareKey: nextKey } : prev));
+        }
+      });
+    }
+
     addToast(
       isVi
-        ? `Đã áp dụng nhạc nền: ${savedAudio.name}`
-        : `Applied soundtrack: ${savedAudio.name}`,
+        ? `Đã áp dụng & đồng bộ nhạc nền: ${savedAudio.name}`
+        : `Applied & synced soundtrack: ${savedAudio.name}`,
       'success'
     );
   };
@@ -554,6 +605,12 @@ export const SlideshowPage: React.FC = () => {
             <span className="text-xs px-2.5 py-0.5 rounded-full bg-white/10 text-ivory/85 font-medium">
               {activeSlide.label}
             </span>
+            {!isOwner && (
+              <span className="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full bg-white/15 border border-white/20 text-[10px] text-gold font-medium">
+                {isVi ? 'Chế độ Khách xem' : 'Guest View'} • @
+                {album.ownerUsername || album.author}
+              </span>
+            )}
           </div>
         </div>
 
@@ -814,19 +871,21 @@ export const SlideshowPage: React.FC = () => {
             </span>
           </div>
 
-          {!audioRecord ? (
-            <div className="flex items-center gap-2">
-              <label className="cursor-pointer inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gold text-charcoal hover:bg-ivory font-semibold transition-colors shadow-xs">
-                <Scissors className="w-3.5 h-3.5" />
-                <span>{isVi ? 'Chọn & Cắt Ghép Nhạc' : 'Choose & Trim Audio'}</span>
-                <input
-                  type="file"
-                  accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/mp4,audio/x-m4a,audio/*"
-                  onChange={handleSelectAudioFile}
-                  className="hidden"
-                />
-              </label>
-            </div>
+          {!audioRecord && !audioUrl ? (
+            isOwner ? (
+              <div className="flex items-center gap-2">
+                <label className="cursor-pointer inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gold text-charcoal hover:bg-ivory font-semibold transition-colors shadow-xs">
+                  <Scissors className="w-3.5 h-3.5" />
+                  <span>{isVi ? 'Chọn & Cắt Ghép Nhạc' : 'Choose & Trim Audio'}</span>
+                  <input
+                    type="file"
+                    accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/mp4,audio/x-m4a,audio/*"
+                    onChange={handleSelectAudioFile}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            ) : null
           ) : (
             <div className="flex flex-wrap items-center gap-2 bg-white/10 px-3 py-1.5 rounded-xl border border-white/10">
               <button
@@ -842,40 +901,44 @@ export const SlideshowPage: React.FC = () => {
                 <span>{isMusicPlaying ? t.slideshow.pauseMusic : t.slideshow.playMusic}</span>
               </button>
 
-              {/* Open Audio Trimmer & Splicer Studio */}
-              <button
-                type="button"
-                onClick={() => {
-                  if (audioRef.current && isMusicPlaying) {
-                    audioRef.current.pause();
-                    setIsMusicPlaying(false);
-                  }
-                  setPendingAudioFile(null);
-                  setTrimmerOpen(true);
-                }}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-terracotta/90 hover:bg-terracotta text-white font-semibold transition-colors"
-                title={
-                  isVi
-                    ? 'Cắt đoạn điệp khúc hoặc ghép nối nhiều bài nhạc'
-                    : 'Trim chorus or splice multiple audio tracks'
-                }
-              >
-                <Scissors className="w-3.5 h-3.5" />
-                <span>{isVi ? 'Cắt / Ghép nhạc' : 'Trim / Splice'}</span>
-              </button>
+              {/* Owner-Only: Audio Trimmer & Splicer Studio + Change/Remove Track */}
+              {isOwner && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (audioRef.current && isMusicPlaying) {
+                        audioRef.current.pause();
+                        setIsMusicPlaying(false);
+                      }
+                      setPendingAudioFile(null);
+                      setTrimmerOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-terracotta/90 hover:bg-terracotta text-white font-semibold transition-colors"
+                    title={
+                      isVi
+                        ? 'Cắt đoạn điệp khúc hoặc ghép nối nhiều bài nhạc'
+                        : 'Trim chorus or splice multiple audio tracks'
+                    }
+                  >
+                    <Scissors className="w-3.5 h-3.5" />
+                    <span>{isVi ? 'Cắt / Ghép nhạc' : 'Trim / Splice'}</span>
+                  </button>
 
-              <label
-                className="cursor-pointer p-1 text-ivory/80 hover:text-gold"
-                title={isVi ? 'Đổi file nhạc khác' : 'Upload another audio file'}
-              >
-                <Upload className="w-3.5 h-3.5" />
-                <input
-                  type="file"
-                  accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/mp4,audio/x-m4a,audio/*"
-                  onChange={handleSelectAudioFile}
-                  className="hidden"
-                />
-              </label>
+                  <label
+                    className="cursor-pointer p-1 text-ivory/80 hover:text-gold"
+                    title={isVi ? 'Đổi file nhạc khác' : 'Upload another audio file'}
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <input
+                      type="file"
+                      accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/mp4,audio/x-m4a,audio/*"
+                      onChange={handleSelectAudioFile}
+                      className="hidden"
+                    />
+                  </label>
+                </>
+              )}
 
               <button
                 type="button"
@@ -907,14 +970,16 @@ export const SlideshowPage: React.FC = () => {
                 <Repeat className="w-3.5 h-3.5" />
               </button>
 
-              <button
-                type="button"
-                title={t.slideshow.removeMusic}
-                onClick={handleRemoveMusic}
-                className="p-1 text-red-400 hover:text-red-300"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
+              {isOwner && (
+                <button
+                  type="button"
+                  title={t.slideshow.removeMusic}
+                  onClick={handleRemoveMusic}
+                  className="p-1 text-red-400 hover:text-red-300"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           )}
         </div>

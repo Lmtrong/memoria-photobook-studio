@@ -140,8 +140,21 @@ export interface CoverConfig {
   ornament?: string;
 }
 
+export interface UserProfile {
+  id: string;
+  username: string;
+  emailOrPhone: string;
+  contactType: 'email' | 'phone';
+  displayName: string;
+  createdAt: string;
+}
+
 export interface Album {
   id: string;
+  ownerId?: string;
+  ownerUsername?: string;
+  ownerName?: string;
+  isPublic?: boolean;
   title: string;
   description: string;
   author: string;
@@ -153,6 +166,7 @@ export interface Album {
   pages: AlbumPage[];
   isSample?: boolean;
   shareKey?: string;
+  cloudSyncedAt?: string;
 }
 
 export interface StoredPhoto {
@@ -165,6 +179,7 @@ export interface StoredPhoto {
   size: number;
   originalBlob: Blob;
   thumbnailDataUrl: string;
+  remoteUrl?: string;
   createdAt: string;
 }
 
@@ -183,6 +198,7 @@ export interface StoredAudio {
   name: string;
   mimeType: string;
   blob: Blob;
+  remoteUrl?: string;
   duration?: number;
   segments?: AudioSegmentConfig[];
   createdAt: string;

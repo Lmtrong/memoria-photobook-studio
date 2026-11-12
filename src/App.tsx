@@ -5,6 +5,8 @@ import { AlbumEditorPage } from './pages/AlbumEditorPage';
 import { BookViewerPage } from './pages/BookViewerPage';
 import { SlideshowPage } from './pages/SlideshowPage';
 import { ToastContainer } from './components/common/ToastContainer';
+import { AuthModal } from './components/dialogs/AuthModal';
+import { SupabaseConfigModal } from './components/dialogs/SupabaseConfigModal';
 
 export const App: React.FC = () => {
   return (
@@ -16,6 +18,8 @@ export const App: React.FC = () => {
         <Route path="/slideshow/:albumId" element={<SlideshowPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      <AuthModal />
+      <SupabaseConfigModal />
       <ToastContainer />
     </BrowserRouter>
   );

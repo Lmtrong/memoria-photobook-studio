@@ -8,14 +8,20 @@ import {
   PredefinedLayout,
   StoredAudio,
   StoredPhoto,
+  UserProfile,
 } from '../../types';
 import { PREDEFINED_LAYOUTS, THEME_PRESETS } from '../../utils/constants';
 import { generateSamplePhotoBlob } from '../image/imageService';
+
+export interface StoredUserAccount extends UserProfile {
+  passwordHash: string;
+}
 
 export class MemoriaDatabase extends Dexie {
   albums!: Table<Album, string>;
   photos!: Table<StoredPhoto, string>;
   audios!: Table<StoredAudio, string>;
+  users!: Table<StoredUserAccount, string>;
 
   constructor() {
     super('MemoriaPhotoBookStudioDB');
@@ -23,6 +29,12 @@ export class MemoriaDatabase extends Dexie {
       albums: 'id, title, updatedAt, createdAt, format, themeId',
       photos: 'id, albumId, name, createdAt',
       audios: 'id, albumId, createdAt',
+    });
+    this.version(2).stores({
+      albums: 'id, ownerId, title, updatedAt, createdAt, format, themeId',
+      photos: 'id, albumId, name, createdAt',
+      audios: 'id, albumId, createdAt',
+      users: 'id, &username, &emailOrPhone, createdAt',
     });
   }
 }

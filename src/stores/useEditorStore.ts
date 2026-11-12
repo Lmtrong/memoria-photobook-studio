@@ -12,6 +12,8 @@ import {
   TextElement,
 } from '../types';
 import { db, createPageFromLayout } from '../services/database/db';
+import { syncAlbumToCloudInBackground } from '../services/supabase/supabaseService';
+import { useAuthStore } from './useAuthStore';
 import { PREDEFINED_LAYOUTS, THEME_PRESETS } from '../utils/constants';
 
 export type SelectedElementType = 'photo' | 'text' | 'sticker' | 'page' | 'cover';
@@ -98,6 +100,7 @@ interface EditorState {
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let cloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
 
 function cloneSnapshot(album: Album, activePageIndex: number): HistorySnapshot {
   if (typeof structuredClone === 'function') {
@@ -225,6 +228,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         };
         await db.albums.put(albumToSave);
         set({ saveStatus: 'saved' });
+
+        // Schedule non-blocking background cloud sync after user pauses editing for 2.5s
+        if (cloudSyncTimer) clearTimeout(cloudSyncTimer);
+        cloudSyncTimer = setTimeout(() => {
+          const user = useAuthStore.getState().currentUser;
+          syncAlbumToCloudInBackground(albumToSave.id, user).then((newKey) => {
+            if (newKey) {
+              const latest = get().album;
+              if (latest && latest.id === albumToSave.id && latest.shareKey !== newKey) {
+                set({ album: { ...latest, shareKey: newKey } });
+              }
+            }
+          });
+        }, 2500);
       } catch (err) {
         console.error('Failed to auto-save album to IndexedDB:', err);
         set({ saveStatus: 'error' });

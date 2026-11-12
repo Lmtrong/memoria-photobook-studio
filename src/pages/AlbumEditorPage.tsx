@@ -6,6 +6,8 @@ import { isSupportedImageFile, processImageFile } from '../services/image/imageS
 import { StoredPhoto } from '../types';
 import { useEditorStore } from '../stores/useEditorStore';
 import { useToastStore } from '../stores/useToastStore';
+import { useAuthStore, canUserEditAlbum } from '../stores/useAuthStore';
+import { syncAlbumToCloudInBackground } from '../services/supabase/supabaseService';
 import { usePhotoUrls } from '../hooks/usePhotoUrls';
 import { FORMAT_DIMENSIONS } from '../utils/constants';
 import { useI18n } from '../i18n';
@@ -38,6 +40,7 @@ export const AlbumEditorPage: React.FC = () => {
   const navigate = useNavigate();
   const { t, lang, toggleLanguage } = useI18n();
   const { addToast } = useToastStore();
+  const { currentUser } = useAuthStore();
   const slotFileInputRef = useRef<HTMLInputElement>(null);
 
   const {
@@ -77,17 +80,33 @@ export const AlbumEditorPage: React.FC = () => {
 
   const stageRef = useRef<HTMLDivElement>(null);
 
-  // Load album from IndexedDB on mount
+  // Load album from IndexedDB on mount & enforce Owner permission
   useEffect(() => {
     if (!albumId) return;
     db.albums.get(albumId).then((found) => {
       if (found) {
+        if (!canUserEditAlbum(found, currentUser)) {
+          addToast(
+            lang === 'vi'
+              ? `Bạn chỉ có quyền xem album này. Chỉ chủ sở hữu (@${
+                  found.ownerUsername || found.author
+                }) mới được phép chỉnh sửa.`
+              : `Read-only access. Only the owner (@${
+                  found.ownerUsername || found.author
+                }) can edit this album.`,
+            'info'
+          );
+          navigate(`/slideshow/${found.id}`);
+          return;
+        }
         loadAlbumIntoEditor(found);
+        // Trigger initial background cloud sync if not yet synced
+        syncAlbumToCloudInBackground(found.id, currentUser);
       } else {
         navigate('/');
       }
     });
-  }, [albumId, loadAlbumIntoEditor, navigate]);
+  }, [albumId, currentUser, lang, addToast, loadAlbumIntoEditor, navigate]);
 
   const photos = useLiveQuery(
     () => (albumId ? db.photos.where('albumId').equals(albumId).toArray() : []),
@@ -231,6 +250,7 @@ export const AlbumEditorPage: React.FC = () => {
         }
       }
       setAssignTargetSlotId(null);
+      syncAlbumToCloudInBackground(album.id, currentUser);
     }
   };
 
