@@ -1,0 +1,129 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-ivory: #F8F5F0;
+  --bg-cream: #EFE9DF;
+  --bg-beige: #E3D7C8;
+  --color-taupe: #B99B83;
+  --color-terracotta: #9C7560;
+  --color-charcoal: #39332F;
+  --color-gold: #C5A059;
+  --color-rose: #D6A29C;
+}
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    background-color: var(--bg-ivory);
+    color: var(--color-charcoal);
+    overflow-x: hidden;
+  }
+
+  h1, h2, h3, .font-serif-title {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #EFE9DF;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #CDBBA7;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9C7560;
+}
+
+/* Paper Textures & Book Effects */
+.paper-texture-subtle {
+  background-image: radial-gradient(rgba(57, 51, 47, 0.03) 1px, transparent 0);
+  background-size: 16px 16px;
+}
+
+.paper-texture-linen {
+  background-image: 
+    linear-gradient(90deg, rgba(57, 51, 47, 0.025) 50%, transparent 50%),
+    linear-gradient(rgba(57, 51, 47, 0.025) 50%, transparent 50%);
+  background-size: 4px 4px;
+}
+
+.paper-texture-vintage {
+  background-color: #F3E9D2;
+  background-image: 
+    radial-gradient(at 20% 30%, rgba(156, 117, 96, 0.12) 0px, transparent 60%),
+    radial-gradient(at 80% 75%, rgba(185, 155, 131, 0.15) 0px, transparent 55%),
+    repeating-linear-gradient(45deg, rgba(57, 51, 47, 0.015) 0px, rgba(57, 51, 47, 0.015) 2px, transparent 2px, transparent 4px);
+}
+
+.paper-texture-floral {
+  background-color: #FDF8F6;
+  background-image: 
+    radial-gradient(#D6A29C 0.8px, transparent 0.8px), 
+    radial-gradient(#B99B83 0.8px, #FDF8F6 0.8px);
+  background-size: 32px 32px;
+  background-position: 0 0, 16px 16px;
+}
+
+.paper-texture-dots {
+  background-image: radial-gradient(#B99B83 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.paper-texture-grid {
+  background-size: 24px 24px;
+  background-image: 
+    linear-gradient(to right, rgba(185, 155, 131, 0.18) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(185, 155, 131, 0.18) 1px, transparent 1px);
+}
+
+/* 3D Book Perspective */
+.perspective-2000 {
+  perspective: 2200px;
+}
+
+.preserve-3d {
+  transform-style: preserve-3d;
+}
+
+.backface-hidden {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.book-spine-crease-left {
+  background: linear-gradient(to right, 
+    rgba(0,0,0,0.02) 0%,
+    rgba(0,0,0,0) 80%,
+    rgba(45, 36, 30, 0.04) 92%,
+    rgba(45, 36, 30, 0.14) 97%,
+    rgba(25, 20, 16, 0.25) 100%
+  );
+}
+
+.book-spine-crease-right {
+  background: linear-gradient(to left, 
+    rgba(0,0,0,0.02) 0%,
+    rgba(0,0,0,0) 80%,
+    rgba(45, 36, 30, 0.04) 92%,
+    rgba(45, 36, 30, 0.14) 97%,
+    rgba(25, 20, 16, 0.25) 100%
+  );
+}
+
+.hardcover-leather-overlay {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 0),
+                    radial-gradient(rgba(0, 0, 0, 0.08) 1px, transparent 0);
+  background-size: 6px 6px;
+  background-position: 0 0, 3px 3px;
+}
