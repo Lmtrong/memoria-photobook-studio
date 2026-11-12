@@ -7,7 +7,6 @@ import { BookCoverRenderer } from '../book/BookCoverRenderer';
 import { PageSurfaceRenderer } from '../book/PageSurfaceRenderer';
 import { AudioTrimmerModal } from '../dialogs/AudioTrimmerModal';
 import { db } from '../../services/database/db';
-import { publishSharedAlbumLink, syncAlbumToLocalServer } from '../../services/share/shareService';
 import { useI18n } from '../../i18n';
 import { useToastStore } from '../../stores/useToastStore';
 import {
@@ -158,7 +157,6 @@ export const SlideshowModal: React.FC<SlideshowModalProps> = ({
     setAudioUrl(nextUrl);
     setTrimmerOpen(false);
     setPendingAudioFile(null);
-    syncAlbumToLocalServer(album.id);
   };
 
   const toggleMusicPlayback = () => {
@@ -265,8 +263,8 @@ export const SlideshowModal: React.FC<SlideshowModalProps> = ({
 
           <button
             type="button"
-            onClick={async () => {
-              const { shareUrl } = await publishSharedAlbumLink(album.id);
+            onClick={() => {
+              const shareUrl = `${window.location.origin}/slideshow/${album.id}`;
               navigator.clipboard.writeText(shareUrl).then(() => {
                 addToast(t.slideshow.copiedLinkToast, 'success');
               });

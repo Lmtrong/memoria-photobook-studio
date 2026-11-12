@@ -168,8 +168,8 @@ export const PdfExportModal: React.FC<PdfExportModalProps> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/65 backdrop-blur-xs p-4 overflow-y-auto">
-      <div className="bg-ivory border border-beige rounded-2xl shadow-book max-w-xl w-full overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/65 backdrop-blur-xs p-4 overflow-y-auto text-charcoal">
+      <div className="bg-ivory text-charcoal border border-beige rounded-2xl shadow-book max-w-xl w-full overflow-hidden">
         {/* Header */}
         <div className="px-6 py-4 bg-cream/70 border-b border-beige flex items-center justify-between">
           <div>
@@ -231,63 +231,101 @@ export const PdfExportModal: React.FC<PdfExportModalProps> = ({
             <label className="block font-semibold uppercase tracking-wider text-charcoal/70">
               {t.export.rangeLabel}
             </label>
-            <div className="flex items-center gap-4">
-              <label className="inline-flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  checked={rangeType === 'all'}
-                  onChange={() => setRangeType('all')}
-                  className="accent-terracotta"
-                />
-                <span>{t.export.rangeAll}</span>
-              </label>
-              <label className="inline-flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  checked={rangeType === 'custom'}
-                  onChange={() => setRangeType('custom')}
-                  className="accent-terracotta"
-                />
-                <span>{t.export.rangeCustom}</span>
-              </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setRangeType('all')}
+                className={`p-3 rounded-xl border text-left flex items-center gap-3 transition-all ${
+                  rangeType === 'all'
+                    ? 'border-terracotta bg-cream ring-1 ring-terracotta'
+                    : 'border-beige bg-white hover:bg-cream/40'
+                }`}
+              >
+                <span
+                  className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition-colors ${
+                    rangeType === 'all'
+                      ? 'border-terracotta bg-terracotta'
+                      : 'border-charcoal/35 bg-white'
+                  }`}
+                >
+                  {rangeType === 'all' && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                </span>
+                <span className="font-medium text-charcoal text-xs leading-snug">
+                  {t.export.rangeAll}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setRangeType('custom')}
+                className={`p-3 rounded-xl border text-left flex items-center gap-3 transition-all ${
+                  rangeType === 'custom'
+                    ? 'border-terracotta bg-cream ring-1 ring-terracotta'
+                    : 'border-beige bg-white hover:bg-cream/40'
+                }`}
+              >
+                <span
+                  className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition-colors ${
+                    rangeType === 'custom'
+                      ? 'border-terracotta bg-terracotta'
+                      : 'border-charcoal/35 bg-white'
+                  }`}
+                >
+                  {rangeType === 'custom' && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                </span>
+                <span className="font-medium text-charcoal text-xs leading-snug">
+                  {t.export.rangeCustom}
+                </span>
+              </button>
             </div>
 
             {rangeType === 'custom' && (
-              <div className="flex items-center gap-3 pt-1">
-                <div>
-                  <span className="text-charcoal/65 mr-1.5">{t.export.fromPage}:</span>
+              <div className="flex items-center gap-4 p-3 rounded-xl bg-cream/60 border border-beige">
+                <div className="flex items-center gap-2">
+                  <span className="text-charcoal/75 font-medium">{t.export.fromPage}:</span>
                   <input
                     type="number"
                     min={1}
                     max={album.pages.length}
                     value={fromPage}
                     onChange={(e) => setFromPage(Number(e.target.value))}
-                    className="w-16 px-2 py-1 rounded bg-white border border-beige"
+                    className="w-16 px-2.5 py-1.5 rounded-lg bg-white border border-beige text-charcoal font-semibold outline-none focus:border-terracotta"
                   />
                 </div>
-                <div>
-                  <span className="text-charcoal/65 mr-1.5">{t.export.toPage}:</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-charcoal/75 font-medium">{t.export.toPage}:</span>
                   <input
                     type="number"
                     min={fromPage}
                     max={album.pages.length}
                     value={toPage}
                     onChange={(e) => setToPage(Number(e.target.value))}
-                    className="w-16 px-2 py-1 rounded bg-white border border-beige"
+                    className="w-16 px-2.5 py-1.5 rounded-lg bg-white border border-beige text-charcoal font-semibold outline-none focus:border-terracotta"
                   />
                 </div>
               </div>
             )}
 
-            <label className="inline-flex items-center gap-2 cursor-pointer pt-1">
-              <input
-                type="checkbox"
-                checked={includeCover}
-                onChange={(e) => setIncludeCover(e.target.checked)}
-                className="accent-terracotta"
-              />
-              <span>{t.export.includeCover}</span>
-            </label>
+            <button
+              type="button"
+              onClick={() => setIncludeCover((v) => !v)}
+              className={`w-full p-3 rounded-xl border text-left flex items-center gap-3 transition-all ${
+                includeCover
+                  ? 'border-terracotta/70 bg-cream/70'
+                  : 'border-beige bg-white hover:bg-cream/40'
+              }`}
+            >
+              <span
+                className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                  includeCover
+                    ? 'border-terracotta bg-terracotta text-white'
+                    : 'border-charcoal/35 bg-white'
+                }`}
+              >
+                {includeCover && <Check className="w-3 h-3 stroke-[3]" />}
+              </span>
+              <span className="font-medium text-charcoal text-xs">{t.export.includeCover}</span>
+            </button>
           </div>
 
           {/* Quality */}

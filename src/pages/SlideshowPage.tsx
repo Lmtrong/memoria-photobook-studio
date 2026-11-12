@@ -1,13 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../services/database/db';
-import {
-  loadSharedOrLocalAlbum,
-  publishSharedAlbumLink,
-  syncAlbumToLocalServer,
-} from '../services/share/shareService';
 import { Album, AlbumPage, StoredAudio } from '../types';
 import { usePhotoUrls } from '../hooks/usePhotoUrls';
 import { FORMAT_DIMENSIONS } from '../utils/constants';
@@ -51,7 +46,6 @@ interface SlideItem {
 
 export const SlideshowPage: React.FC = () => {
   const { albumId } = useParams<{ albumId: string }>();
-  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { t, lang } = useI18n();
   const isVi = lang === 'vi';
@@ -66,7 +60,6 @@ export const SlideshowPage: React.FC = () => {
   const [transitionStyle, setTransitionStyle] = useState<'fade' | 'slide' | 'zoom'>('fade');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
-  const [isPublishingShare, setIsPublishingShare] = useState(false);
   const [hudVisible, setHudVisible] = useState(true);
 
   // Audio state
@@ -90,17 +83,18 @@ export const SlideshowPage: React.FC = () => {
   const [stageScale, setStageScale] = useState(1);
   const [stagePadding, setStagePadding] = useState({ top: 84, bottom: 80 });
 
-  const shareKeyParam = searchParams.get('s');
-
-  // Load album & audio (from local IndexedDB OR from Cloud/LAN Share Bundle so anyone clicking the link can view it!)
+  // Load album & audio directly from IndexedDB (instant, zero lag)
   useEffect(() => {
     if (!albumId) return;
     let mounted = true;
     let createdAudioUrl: string | null = null;
 
     setIsLoadingAlbum(true);
-    loadSharedOrLocalAlbum(albumId, shareKeyParam)
-      .then(({ album: loadedAlbum, audioRecord: loadedAudio }) => {
+    Promise.all([
+      db.albums.get(albumId),
+      db.audios.where('albumId').equals(albumId).first(),
+    ])
+      .then(([loadedAlbum, loadedAudio]) => {
         if (!mounted) return;
         if (!loadedAlbum) {
           navigate('/');
@@ -122,7 +116,7 @@ export const SlideshowPage: React.FC = () => {
       if (createdAudioUrl) URL.revokeObjectURL(createdAudioUrl);
       setIsMusicPlaying(false);
     };
-  }, [albumId, shareKeyParam, navigate]);
+  }, [albumId, navigate]);
 
   const photos = useLiveQuery(
     () => (albumId ? db.photos.where('albumId').equals(albumId).toArray() : []),
@@ -371,31 +365,14 @@ export const SlideshowPage: React.FC = () => {
     audioRef.current.loop = loopMusic;
   }, [volume, isMuted, loopMusic]);
 
-  // Create & Copy Universal Share Link (packs album + photos + trimmed music so ANYONE clicking the link sees & hears everything!)
-  const handleCopyShareLink = async () => {
-    if (!album || isPublishingShare) return;
-    setIsPublishingShare(true);
-    try {
-      const { shareUrl, shareKey } = await publishSharedAlbumLink(album.id);
-      if (shareKey && shareKey !== shareKeyParam) {
-        setSearchParams({ s: shareKey }, { replace: true });
-      }
-      await navigator.clipboard.writeText(shareUrl);
-      setCopiedLink(true);
-      addToast(
-        isVi
-          ? 'Đã tạo & sao chép Link Trình Chiếu (kèm ảnh & nhạc đã cắt)! Bất kỳ ai mở link đều xem được.'
-          : 'Copied Universal Presentation Link (with photos & trimmed music)! Anyone with the link can view it.',
-        'success'
-      );
-      window.setTimeout(() => setCopiedLink(false), 3000);
-    } catch {
-      const fallbackUrl = window.location.href;
-      await navigator.clipboard.writeText(fallbackUrl).catch(() => {});
-      addToast(t.slideshow.copiedLinkToast, 'info');
-    } finally {
-      setIsPublishingShare(false);
-    }
+  // Instant 0ms Copy Link (no heavy encoding or network lag)
+  const handleCopyShareLink = () => {
+    if (!album) return;
+    const shareUrl = `${window.location.origin}/slideshow/${album.id}`;
+    navigator.clipboard.writeText(shareUrl).catch(() => {});
+    setCopiedLink(true);
+    addToast(t.slideshow.copiedLinkToast, 'success');
+    window.setTimeout(() => setCopiedLink(false), 2000);
   };
 
   // Selecting an audio file opens the Audio Trimmer & Splicer Studio so the user can cut/splice instead of inserting the whole song
@@ -420,9 +397,6 @@ export const SlideshowPage: React.FC = () => {
     setTrimmerOpen(false);
     setPendingAudioFile(null);
 
-    if (album) {
-      syncAlbumToLocalServer(album.id);
-    }
     addToast(
       isVi
         ? `Đã áp dụng nhạc nền: ${savedAudio.name}`
@@ -459,9 +433,6 @@ export const SlideshowPage: React.FC = () => {
     setAudioUrl(null);
     setIsMusicPlaying(false);
     setNeedsAudioUnlock(false);
-    if (album) {
-      syncAlbumToLocalServer(album.id);
-    }
   };
 
   if (isLoadingAlbum || !album || slides.length === 0) {
@@ -624,24 +595,11 @@ export const SlideshowPage: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2.5 text-xs">
           <button
             type="button"
-            disabled={isPublishingShare}
             onClick={handleCopyShareLink}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gold text-charcoal hover:bg-ivory font-semibold transition-colors shadow-xs disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gold text-charcoal hover:bg-ivory font-semibold transition-colors shadow-xs"
           >
-            {isPublishingShare ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : copiedLink ? (
-              <Check className="w-3.5 h-3.5" />
-            ) : (
-              <Link2 className="w-3.5 h-3.5" />
-            )}
-            <span>
-              {isPublishingShare
-                ? isVi
-                  ? 'Đang đóng gói link...'
-                  : 'Packing share link...'
-                : t.slideshow.copyLinkBtn}
-            </span>
+            {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Link2 className="w-3.5 h-3.5" />}
+            <span>{t.slideshow.copyLinkBtn}</span>
           </button>
 
           <div className="hidden sm:flex items-center gap-1 bg-white/10 px-2.5 py-1.5 rounded-xl border border-white/10">

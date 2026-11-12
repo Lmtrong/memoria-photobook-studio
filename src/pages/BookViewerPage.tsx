@@ -1,8 +1,7 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../services/database/db';
-import { loadSharedOrLocalAlbum } from '../services/share/shareService';
 import { Album, AlbumPage } from '../types';
 import { usePhotoUrls } from '../hooks/usePhotoUrls';
 import { FORMAT_DIMENSIONS } from '../utils/constants';
@@ -43,7 +42,6 @@ interface PhysicalSheet {
 
 export const BookViewerPage: React.FC = () => {
   const { albumId } = useParams<{ albumId: string }>();
-  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { t } = useI18n();
 
@@ -69,18 +67,16 @@ export const BookViewerPage: React.FC = () => {
 
   const viewerRootRef = useRef<HTMLDivElement>(null);
 
-  const shareKeyParam = searchParams.get('s');
-
   useEffect(() => {
     if (!albumId) return;
-    loadSharedOrLocalAlbum(albumId, shareKeyParam).then(({ album: found }) => {
+    db.albums.get(albumId).then((found) => {
       if (found) {
         setAlbum(found);
       } else {
         navigate('/');
       }
     });
-  }, [albumId, shareKeyParam, navigate]);
+  }, [albumId, navigate]);
 
   const photos = useLiveQuery(
     () => (albumId ? db.photos.where('albumId').equals(albumId).toArray() : []),
